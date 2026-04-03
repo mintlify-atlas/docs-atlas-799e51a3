@@ -1,0 +1,135 @@
+---
+title: "Ethereum Mainnet"
+description: "How to run Reth on Ethereum mainnet or Sepolia testnet alongside a consensus client."
+---
+
+Reth is an [execution client](https://ethereum.org/en/developers/docs/nodes-and-clients/#execution-clients). After Ethereum's transition to Proof of Stake (the Merge), running a [consensus client](https://ethereum.org/en/developers/docs/nodes-and-clients/#consensus-clients) alongside your execution client is required to sync any post-Merge network.
+
+Consensus clients decide which blocks are part of the canonical chain, while execution clients validate that transactions and blocks are internally valid and consistent with the world state. Running both in tandem is necessary for synchronization and participation in the network.
+
+| Client | Role |
+|---|---|
+| Execution (Reth) | Validates transactions and blocks, executes state transitions |
+| Consensus (e.g. Lighthouse) | Determines which valid blocks are part of the canonical chain |
+
+## Running the Reth node
+
+First, ensure Reth is installed by following the [installation guide](/installation/overview).
+
+<Tabs>
+  <Tab title="Archive node">
+    An archive node retains all historical state data. This is the default mode and requires the most disk space.
+
+    ```bash
+    reth node
+    ```
+  </Tab>
+  <Tab title="Full node">
+    A full node prunes historical state and uses significantly less disk space while still supporting most use cases.
+
+    ```bash
+    reth node --full
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  These commands do not open any HTTP or WebSocket ports by default. Add `--http` and/or `--ws` flags to enable JSON-RPC access, and use `--http.api` or `--ws.api` to specify which [JSON-RPC APIs](/jsonrpc/intro) to enable.
+</Note>
+
+For the full list of available flags, see the [`reth node` CLI reference](/cli/node).
+
+## JWT authentication setup
+
+The execution and consensus layers communicate over the [Engine API](https://github.com/ethereum/execution-apis/blob/main/src/engine/common.md), which is authenticated using a JWT secret.
+
+By default, Reth auto-generates a JWT secret and places it at:
+
+- **Linux**: `$HOME/.local/share/reth/mainnet/jwt.hex`
+- **macOS**: `$HOME/Library/Application Support/reth/mainnet/jwt.hex`
+
+You must use the **same JWT secret** in both Reth and your consensus client. To specify a custom path or override the Engine API address and port:
+
+```bash
+reth node \
+    --authrpc.jwtsecret /path/to/secret \
+    --authrpc.addr 127.0.0.1 \
+    --authrpc.port 8551
+```
+
+The Engine API is exposed at `http://localhost:8551` by default.
+
+## Running the consensus layer
+
+This guide uses [Lighthouse](https://lighthouse-book.sigmaprime.io/) as the consensus client. Sigma Prime provides [installation](https://lighthouse-book.sigmaprime.io/installation.html) and [node operation](https://lighthouse-book.sigmaprime.io/run_a_node.html) documentation.
+
+Once Lighthouse is installed, start it with:
+
+```bash
+lighthouse bn \
+    --checkpoint-sync-url https://mainnet.checkpoint.sigp.io \
+    --execution-endpoint http://localhost:8551 \
+    --execution-jwt /path/to/secret
+```
+
+The `--checkpoint-sync-url` value can be any endpoint from the [community-maintained checkpoint sync list](https://eth-clients.github.io/checkpoint-sync-endpoints/#mainnet).
+
+Once Lighthouse connects to Reth, your node will begin receiving `fork_choice_updated` messages and start syncing the chain.
+
+<Tip>
+  Set up [monitoring](/run/monitoring) while your node syncs to track progress and catch any issues early.
+</Tip>
+
+## Verifying the sync
+
+Inspect the Reth logs to confirm headers are being received and stages are progressing. Once connected to peers and receiving fork choice updates from your consensus client, the node will work through the sync stages automatically.
+
+You can also [test the JSON-RPC API](/jsonrpc/intro) to query the current chain state.
+
+## Running without a consensus layer
+
+The following options are available for testing and debugging without a live consensus client. They are **not suitable for production** use.
+
+<Warning>
+  The `--debug.tip`, `--debug.etherscan`, and `--debug.rpc-consensus-url` flags are mutually exclusive. Use only one at a time.
+</Warning>
+
+<AccordionGroup>
+  <Accordion title="Manual chain tip (--debug.tip)">
+    Set the chain tip manually using a block hash. Reth will simulate a single `engine_forkchoiceUpdated` message and sync to the specified block. Useful for targeted testing.
+
+    ```bash
+    reth node --debug.tip 0x9ba680d8479f936f84065ce94f58c5f0cc1adb128945167e0875ba41a36cd93b
+    ```
+
+    This example syncs to [block 23450000](https://etherscan.io/block/23450000). The node will not continue tracking the tip after reaching the specified block.
+  </Accordion>
+
+  <Accordion title="Etherscan as block source (--debug.etherscan)">
+    Run Reth with a fake consensus client that advances the chain using recent blocks from Etherscan. Requires an Etherscan API key.
+
+    ```bash
+    export ETHERSCAN_API_KEY=your_api_key_here
+    reth node --debug.etherscan
+    ```
+
+    You can also specify a custom Etherscan API URL:
+
+    ```bash
+    export ETHERSCAN_API_KEY=your_api_key_here
+    reth node --debug.etherscan https://api.etherscan.io/api
+    ```
+  </Accordion>
+
+  <Accordion title="RPC consensus source (--debug.rpc-consensus-url)">
+    Run Reth with a fake consensus client that fetches blocks from an existing RPC endpoint. Supports both HTTP (polling) and WebSocket (subscriptions) endpoints.
+
+    ```bash
+    # HTTP endpoint (polls for new blocks)
+    reth node --debug.rpc-consensus-url https://eth-mainnet.g.alchemy.com/v2/your-api-key
+
+    # WebSocket endpoint (real-time subscriptions)
+    reth node --debug.rpc-consensus-url wss://eth-mainnet.g.alchemy.com/v2/your-api-key
+    ```
+  </Accordion>
+</AccordionGroup>

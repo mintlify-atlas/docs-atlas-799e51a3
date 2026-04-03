@@ -1,0 +1,492 @@
+---
+title: "trace Namespace"
+description: "OpenEthereum/Parity-style tracing API for deep inspection of transaction and block execution."
+---
+
+The `trace` namespace provides OpenEthereum-compatible (Parity-style) tracing methods that give detailed insight into transaction execution. It complements the `debug` namespace, which uses Geth-style traces.
+
+Enable the `trace` namespace:
+
+```bash
+reth node --http --http.api trace
+```
+
+There are two categories of methods:
+
+- **Ad-hoc tracing APIs** — perform diagnostics on specific calls or transactions (historical or hypothetical)
+- **Transaction-trace filtering APIs** — search and filter execution traces across blocks
+
+<Note>
+  Tracing methods re-execute transactions and can be resource-intensive. For production workloads, run tracing on a dedicated archive node.
+</Note>
+
+## Trace Types
+
+When calling ad-hoc tracing methods, you specify which trace types you want returned:
+
+| Type        | Description                                                            |
+| ----------- | ---------------------------------------------------------------------- |
+| `trace`     | Full call tree showing all internal calls and their results            |
+| `vmTrace`   | Step-by-step VM execution with opcodes, stack, memory, and storage     |
+| `stateDiff` | State changes caused by the transaction (balance, nonce, code, storage) |
+
+## Trace Format
+
+### LocalizedTransactionTrace
+
+Traces returned by filtering methods (`trace_block`, `trace_filter`, `trace_get`, `trace_transaction`) include location metadata:
+
+<ResponseField name="action" type="object">
+  The action performed by this trace (call, create, suicide, or reward).
+</ResponseField>
+
+<ResponseField name="result" type="object | null">
+  Execution result, or `null` if the trace failed.
+</ResponseField>
+
+<ResponseField name="error" type="string | null">
+  Error message if the trace reverted or failed.
+</ResponseField>
+
+<ResponseField name="blockHash" type="string | null">
+  Hash of the containing block.
+</ResponseField>
+
+<ResponseField name="blockNumber" type="number | null">
+  Number of the containing block.
+</ResponseField>
+
+<ResponseField name="transactionHash" type="string | null">
+  Hash of the containing transaction.
+</ResponseField>
+
+<ResponseField name="transactionPosition" type="number | null">
+  Index of the transaction within the block.
+</ResponseField>
+
+<ResponseField name="subtraces" type="number">
+  Number of child traces spawned by this trace.
+</ResponseField>
+
+<ResponseField name="traceAddress" type="array">
+  Path from the root trace to this trace in the call tree. An empty array `[]` means the top-level call.
+</ResponseField>
+
+<ResponseField name="type" type="string">
+  Action type: `"call"`, `"create"`, `"suicide"`, or `"reward"`.
+</ResponseField>
+
+### Action Types
+
+<AccordionGroup>
+  <Accordion title="call — External and internal calls">
+    | Field      | Type   | Description                                               |
+    | ---------- | ------ | --------------------------------------------------------- |
+    | `callType` | string | `"call"`, `"callcode"`, `"delegatecall"`, `"staticcall"` |
+    | `from`     | string | Caller address                                            |
+    | `to`       | string | Callee address                                            |
+    | `gas`      | string | Gas provided (hex)                                        |
+    | `input`    | string | Call input data                                           |
+    | `value`    | string | ETH value transferred (hex wei)                           |
+  </Accordion>
+
+  <Accordion title="create — Contract deployments">
+    | Field   | Type   | Description                            |
+    | ------- | ------ | -------------------------------------- |
+    | `from`  | string | Creator address                        |
+    | `gas`   | string | Gas provided for deployment (hex)      |
+    | `init`  | string | Contract initialization bytecode       |
+    | `value` | string | ETH value sent to the new contract     |
+  </Accordion>
+
+  <Accordion title="suicide — Self-destruct operations">
+    | Field           | Type   | Description                              |
+    | --------------- | ------ | ---------------------------------------- |
+    | `address`       | string | Address of the contract being destroyed  |
+    | `refundAddress` | string | Address receiving the remaining balance  |
+    | `balance`       | string | Balance transferred to refund address    |
+  </Accordion>
+
+  <Accordion title="reward — Block and uncle rewards">
+    | Field        | Type   | Description                             |
+    | ------------ | ------ | --------------------------------------- |
+    | `author`     | string | Address receiving the reward            |
+    | `value`      | string | Reward amount (hex wei)                 |
+    | `rewardType` | string | `"block"` or `"uncle"`                  |
+  </Accordion>
+</AccordionGroup>
+
+### State Diff Format
+
+When `stateDiff` is requested, the result maps addresses to their state changes:
+
+```json
+{
+  "0x1c39ba39e4735cb65978d4db400ddd70a72dc750": {
+    "balance": {
+      "*": { "from": "0x10000", "to": "0x20000" }
+    },
+    "nonce": {
+      "*": { "from": "0x5", "to": "0x6" }
+    },
+    "code": "=",
+    "storage": {
+      "0x290decd9548b62a8d60345a988386fc84ba6bc95484008f6362f93160ef3e563": {
+        "*": { "from": "0x0", "to": "0x1" }
+      }
+    }
+  }
+}
+```
+
+The change operators are `"+"` (new), `"-"` (deleted), `"*"` (modified), and `"="` (unchanged).
+
+---
+
+## Ad-hoc Tracing APIs
+
+### `trace_call`
+
+Executes a call and returns the requested traces without broadcasting a transaction.
+
+**Parameters:**
+- `tx` — transaction request object (`from`, `to`, `value`, `data`, etc.)
+- `traceTypes` — `Array<string>` — e.g. `["trace"]`, `["trace","stateDiff"]`, `["vmTrace","trace","stateDiff"]`
+- `block` — `BlockId` (optional): block context, defaults to `latest`
+- `stateOverrides` — `object` (optional): temporarily override account state
+- `blockOverrides` — `object` (optional): temporarily override block fields
+
+**Returns:** `TraceResults`
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc":"2.0","method":"trace_call","id":1,
+    "params":[
+      {"from":"0x407d73d8a49eeb85d32cf465507dd71d507100c1","to":"0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b","value":"0x186a0"},
+      ["trace"],
+      "latest"
+    ]
+  }'
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "output": "0x",
+    "stateDiff": null,
+    "trace": [{
+      "action": {
+        "callType": "call",
+        "from": "0x407d73d8a49eeb85d32cf465507dd71d507100c1",
+        "to": "0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b",
+        "gas": "0x1dcd12f8",
+        "input": "0x",
+        "value": "0x186a0"
+      },
+      "result": { "gasUsed": "0x0", "output": "0x" },
+      "subtraces": 0,
+      "traceAddress": [],
+      "type": "call"
+    }],
+    "vmTrace": null
+  }
+}
+```
+
+---
+
+### `trace_callMany`
+
+Executes multiple calls sequentially on top of the same block state. Transaction `n` is executed on top of all `n-1` preceding transactions.
+
+**Parameters:**
+- `calls` — `Array<[tx, traceTypes[]]>` — each entry is a transaction and its requested trace types
+- `block` — `BlockId` (optional)
+
+**Returns:** `Array<TraceResults>` — one result per call.
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc":"2.0","method":"trace_callMany","id":1,
+    "params":[
+      [
+        [{"from":"0x407d73d8a49eeb85d32cf465507dd71d507100c1","to":"0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b","value":"0x186a0"},["trace"]],
+        [{"from":"0x407d73d8a49eeb85d32cf465507dd71d507100c1","to":"0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b","value":"0x186a0"},["trace"]]
+      ],
+      "latest"
+    ]
+  }'
+```
+
+---
+
+### `trace_rawTransaction`
+
+Traces a raw signed transaction (as if calling `eth_sendRawTransaction`) without broadcasting it.
+
+**Parameters:**
+- `rawTx` — `Bytes`: RLP-encoded signed transaction
+- `traceTypes` — `Array<string>`
+- `block` — `BlockId` (optional)
+
+**Returns:** `TraceResults`
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc":"2.0","method":"trace_rawTransaction","id":1,
+    "params":["0x02f872...","["trace"]"]
+  }'
+```
+
+---
+
+### `trace_replayTransaction`
+
+Replays a mined transaction, returning the requested traces.
+
+**Parameters:**
+- `txHash` — `B256`
+- `traceTypes` — `Array<string>`
+
+**Returns:** `TraceResults`
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc":"2.0","method":"trace_replayTransaction","id":1,
+    "params":["0x02d4a872e096445e80d05276ee756cefef7f3b376bcec14246469c0cd97dad8f",["trace","stateDiff"]]
+  }'
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "output": "0x",
+    "stateDiff": null,
+    "trace": [{
+      "action": {
+        "callType": "call",
+        "from": "0x1c39ba39e4735cb65978d4db400ddd70a72dc750",
+        "to": "0x2bd2326c993dfaef84f696526064ff22eba5b362",
+        "gas": "0x13e99",
+        "input": "0x16c72721",
+        "value": "0x0"
+      },
+      "result": { "gasUsed": "0x183", "output": "0x0000000000000000000000000000000000000000000000000000000000000001" },
+      "subtraces": 0,
+      "traceAddress": [],
+      "type": "call"
+    }],
+    "vmTrace": null
+  }
+}
+```
+
+---
+
+### `trace_replayBlockTransactions`
+
+Replays all transactions in a block and returns traces for each.
+
+**Parameters:**
+- `block` — `BlockId`
+- `traceTypes` — `Array<string>`
+
+**Returns:** `Array<TraceResults>` — one result per transaction.
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"trace_replayBlockTransactions","params":["latest",["trace"]],"id":1}'
+```
+
+---
+
+## Transaction-Trace Filtering APIs
+
+### `trace_block`
+
+Returns all traces created during block execution, including internal calls, contract creations, destructions, and miner rewards.
+
+**Parameters:**
+- `block` — `BlockId`
+
+**Returns:** `Array<LocalizedTransactionTrace>`
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"trace_block","params":["latest"],"id":1}'
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [{
+    "action": {
+      "callType": "call",
+      "from": "0xaa7b131dc60b80d3cf5e59b5a21a666aa039c951",
+      "to": "0xd40aba8166a212d6892125f079c33e6f5ca19814",
+      "gas": "0x0",
+      "input": "0x",
+      "value": "0x4768d7effc3fbe"
+    },
+    "blockHash": "0x7eb25504e4c202cf3d62fd585d3e238f592c780cca82dacb2ed3cb5b38883add",
+    "blockNumber": 3068185,
+    "result": { "gasUsed": "0x0", "output": "0x" },
+    "subtraces": 0,
+    "traceAddress": [],
+    "transactionHash": "0x07da28d752aba3b9dd7060005e554719c6205c8a3aea358599fc9b245c52f1f6",
+    "transactionPosition": 0,
+    "type": "call"
+  }]
+}
+```
+
+---
+
+### `trace_transaction`
+
+Returns all traces for a specific mined transaction.
+
+**Parameters:**
+- `txHash` — `B256`
+
+**Returns:** `Array<LocalizedTransactionTrace>`
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"trace_transaction","params":["0x17104ac9d3312d8c136b7f44d4b8b47852618065ebfa534bd2d3b5ef218ca1f3"],"id":1}'
+```
+
+---
+
+### `trace_get`
+
+Returns a trace at a specific position in the call tree of a transaction.
+
+**Parameters:**
+- `txHash` — `B256`
+- `indices` — `Array<number>` — trace address path (e.g. `[0]` for the first sub-call, `[0,1]` for the second sub-call of the first sub-call)
+
+**Returns:** `LocalizedTransactionTrace | null`
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"trace_get","params":["0x17104ac9d3312d8c136b7f44d4b8b47852618065ebfa534bd2d3b5ef218ca1f3",["0x0"]],"id":1}'
+```
+
+---
+
+### `trace_filter`
+
+Searches for traces matching a filter. Similar to `eth_getLogs` but for execution traces.
+
+**Parameters (all optional):**
+
+<ParamField body="fromBlock" type="BlockId">
+  Start block for the filter range.
+</ParamField>
+
+<ParamField body="toBlock" type="BlockId">
+  End block for the filter range.
+</ParamField>
+
+<ParamField body="fromAddress" type="Array<Address>">
+  Only return traces from these sender addresses.
+</ParamField>
+
+<ParamField body="toAddress" type="Array<Address>">
+  Only return traces to these recipient addresses.
+</ParamField>
+
+<ParamField body="after" type="number">
+  Offset — skip the first N matching traces.
+</ParamField>
+
+<ParamField body="count" type="number">
+  Maximum number of traces to return.
+</ParamField>
+
+**Returns:** `Array<LocalizedTransactionTrace>`
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc":"2.0","method":"trace_filter","id":1,
+    "params":[{
+      "fromBlock": "0x2ed0c4",
+      "toBlock": "0x2ed128",
+      "toAddress": ["0x8bbB73BCB5d553B5A556358d27625323Fd781D37"],
+      "after": 1000,
+      "count": 100
+    }]
+  }'
+```
+
+---
+
+## Opcode Gas Methods
+
+These Reth-specific extensions aggregate opcode-level gas usage.
+
+### `trace_transactionOpcodeGas`
+
+Returns opcode gas usage aggregated per opcode for a single transaction.
+
+**Parameters:**
+- `txHash` — `B256`
+
+**Returns:** `{ transactionHash, opcodeGas: Array<{ opcode, count, gasUsed }> }`
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"trace_transactionOpcodeGas","params":["0x17104ac9d3312d8c136b7f44d4b8b47852618065ebfa534bd2d3b5ef218ca1f3"],"id":1}'
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "transactionHash": "0x17104ac9d3312d8c136b7f44d4b8b47852618065ebfa534bd2d3b5ef218ca1f3",
+    "opcodeGas": [
+      { "opcode": "PUSH1", "count": 10, "gasUsed": 30 },
+      { "opcode": "CALL", "count": 1, "gasUsed": 700 }
+    ]
+  }
+}
+```
+
+---
+
+### `trace_blockOpcodeGas`
+
+Returns opcode gas usage aggregated per opcode for every transaction in a block.
+
+**Parameters:**
+- `block` — `BlockId`
+
+**Returns:** `{ blockHash, blockNumber, transactions: Array<{ transactionHash, opcodeGas }> }`
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"trace_blockOpcodeGas","params":["latest"],"id":1}'
+```

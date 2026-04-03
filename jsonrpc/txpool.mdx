@@ -1,0 +1,240 @@
+---
+title: "txpool Namespace"
+description: "Inspect the transaction pool: view pending and queued transactions, their counts, and detailed content."
+---
+
+The `txpool` namespace provides access to Reth's transaction pool (mempool). You can inspect pending and queued transactions, their counts, and detailed content.
+
+Enable the `txpool` namespace:
+
+```bash
+reth node --http --http.api txpool
+```
+
+## Pending vs. Queued Transactions
+
+Reth classifies transactions in the pool into two categories:
+
+| Category  | Description                                                                                          |
+| --------- | ---------------------------------------------------------------------------------------------------- |
+| `pending` | Transactions ready to be included in the next block. Their nonce directly follows the sender's current on-chain nonce. |
+| `queued`  | Transactions that cannot yet be included because there is a nonce gap (i.e., a lower-nonce transaction from the same sender is missing from the pool). |
+
+Both pending and queued transactions are organized by sender address and then by nonce.
+
+---
+
+## Methods
+
+### `txpool_status`
+
+Returns a count of pending and queued transactions in the pool.
+
+**Parameters:** None
+
+**Returns:**
+
+<ResponseField name="pending" type="string">
+  Number of pending transactions (hex-encoded).
+</ResponseField>
+
+<ResponseField name="queued" type="string">
+  Number of queued transactions (hex-encoded).
+</ResponseField>
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"txpool_status","params":[],"id":1}'
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "pending": "0x3e8",
+    "queued": "0x14"
+  }
+}
+```
+
+---
+
+### `txpool_inspect`
+
+Returns a human-readable summary of pending and queued transactions. Each transaction is represented as a compact string: `to: value wei + gasLimit gas × gasPrice wei`.
+
+**Parameters:** None
+
+**Returns:** Object with `pending` and `queued` maps, keyed by sender address → nonce → summary string.
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"txpool_inspect","params":[],"id":1}'
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "pending": {
+      "0x0216d5032f356960cd3749c31ab34eeff21b3395": {
+        "806": "0x47173285a8d7341e5e972fc677286384f802f8ef: 0 wei + 21000 gas × 1000000000 wei"
+      },
+      "0x24d407e5a0b506e1cb2fae163100b5de01f5193c": {
+        "34": "0x3a220f351252089d385b29beca14e27f204c296a: 0 wei + 21000 gas × 1000000000 wei"
+      }
+    },
+    "queued": {
+      "0x976a3fc5d6f7d259ebfb4cc2ae75115475e9867c": {
+        "3": "0x7fb47e10b3aa5b46d68cdb4b3db1fe2a31f3a785: 0 wei + 21000 gas × 1000000000 wei"
+      }
+    }
+  }
+}
+```
+
+---
+
+### `txpool_content`
+
+Returns the full transaction objects for all pending and queued transactions in the pool, organized by sender address and nonce.
+
+**Parameters:** None
+
+**Returns:** Object with `pending` and `queued` maps, keyed by sender address → nonce → full transaction object.
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"txpool_content","params":[],"id":1}'
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "pending": {
+      "0x0216d5032f356960cd3749c31ab34eeff21b3395": {
+        "806": {
+          "blockHash": null,
+          "blockNumber": null,
+          "from": "0x0216d5032f356960cd3749c31ab34eeff21b3395",
+          "gas": "0x5208",
+          "gasPrice": "0x3b9aca00",
+          "hash": "0xaf953a2d01f55cfe080c0c94150a60105e8ac3d51153058a1f03dd239dd08586",
+          "input": "0x",
+          "nonce": "0x326",
+          "to": "0x47173285a8d7341e5e972fc677286384f802f8ef",
+          "transactionIndex": null,
+          "value": "0x0",
+          "type": "0x0"
+        }
+      }
+    },
+    "queued": {}
+  }
+}
+```
+
+<Note>
+  Transactions in the pool have `blockHash`, `blockNumber`, and `transactionIndex` set to `null` since they are not yet mined.
+</Note>
+
+---
+
+### `txpool_contentFrom`
+
+Returns pending and queued transactions for a specific sender address, grouped by nonce.
+
+**Parameters:**
+- `address` — `Address`: the sender address to query
+
+**Returns:** `TxpoolContentFrom` — object with `pending` and `queued` maps keyed by nonce → full transaction object.
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"txpool_contentFrom","params":["0x0216d5032f356960cd3749c31ab34eeff21b3395"],"id":1}'
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "pending": {
+      "806": {
+        "from": "0x0216d5032f356960cd3749c31ab34eeff21b3395",
+        "gas": "0x5208",
+        "gasPrice": "0x3b9aca00",
+        "hash": "0xaf953a2d01f55cfe080c0c94150a60105e8ac3d51153058a1f03dd239dd08586",
+        "input": "0x",
+        "nonce": "0x326",
+        "to": "0x47173285a8d7341e5e972fc677286384f802f8ef",
+        "value": "0x0"
+      }
+    },
+    "queued": {}
+  }
+}
+```
+
+---
+
+## Using cast (Foundry)
+
+```bash
+# Get txpool counts
+cast rpc txpool_status
+
+# Get compact summary
+cast rpc txpool_inspect
+
+# Get full content
+cast rpc txpool_content
+
+# Get transactions from a specific address
+cast rpc txpool_contentFrom '"0x0216d5032f356960cd3749c31ab34eeff21b3395"'
+```
+
+---
+
+## Common Use Cases
+
+<AccordionGroup>
+  <Accordion title="Monitoring mempool size">
+    Use `txpool_status` to monitor the mempool size. A large queue relative to pending may indicate nonce gaps or a backlog of low-fee transactions.
+
+    ```bash
+    # Quick one-liner to check pool counts
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"txpool_status","params":[],"id":1}' \
+      | jq '.result'
+    ```
+  </Accordion>
+
+  <Accordion title="Checking if a transaction is pending">
+    Use `txpool_contentFrom` with the sender's address, then look for your transaction's nonce:
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"txpool_contentFrom","params":["0xYOUR_ADDRESS"],"id":1}' \
+      | jq '.result.pending'
+    ```
+  </Accordion>
+
+  <Accordion title="Finding stuck transactions">
+    Transactions in `queued` are stuck because of a nonce gap. To resolve them, either:
+    - Submit the missing lower-nonce transaction
+    - Replace the stuck transaction by resubmitting with the correct nonce and a higher gas price
+
+    Use `txpool_contentFrom` to identify which nonces are missing in the pending set.
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,316 @@
+---
+title: "RPC"
+description: "JSON-RPC server setup, custom method namespaces, and WebSocket subscriptions in Reth."
+---
+
+The RPC component provides external API access to the node. It implements the Ethereum JSON-RPC specification over HTTP, WebSocket, and IPC transports, and supports custom method extensions through the `extend_rpc_modules` hook.
+
+## Overview
+
+<CardGroup cols={2}>
+  <Card title="Standard Ethereum APIs" icon="ethereum">
+    Full implementation of `eth_`, `debug_`, `trace_`, `net_`, `web3_`, and `admin_` namespaces out of the box.
+  </Card>
+  <Card title="Multiple transports" icon="server">
+    HTTP, WebSocket, and IPC transports are supported simultaneously. Enable them with `--http`, `--ws`, and `--ipc` flags.
+  </Card>
+  <Card title="Custom namespaces" icon="puzzle-piece">
+    Add your own RPC methods using the `jsonrpsee` `#[rpc]` proc-macro and merge them into the configured transports.
+  </Card>
+  <Card title="WebSocket subscriptions" icon="arrow-down-up-across-line">
+    Push real-time data to clients using `jsonrpsee` subscriptions over WebSocket connections.
+  </Card>
+</CardGroup>
+
+## Adding custom RPC methods
+
+Reth uses [`jsonrpsee`](https://github.com/paritytech/jsonrpsee) as its RPC framework. The recommended pattern for custom extensions is:
+
+1. Define your API as a trait using the `#[rpc]` proc-macro.
+2. Implement the trait for a struct that holds the resources you need (e.g., a pool or database handle).
+3. Register the implementation using `extend_rpc_modules` in the node builder.
+
+The complete example below is drawn from `examples/node-custom-rpc` in the Reth repository.
+
+### Step 1: Define the RPC trait
+
+```rust
+use jsonrpsee::{
+    core::{RpcResult, SubscriptionResult},
+    proc_macros::rpc,
+    PendingSubscriptionSink, SubscriptionMessage,
+};
+
+/// Trait interface for a custom `txpoolExt` namespace.
+/// Methods are accessible as `txpoolExt_transactionCount`, etc.
+#[rpc(server, namespace = "txpoolExt")]
+pub trait TxpoolExtApi {
+    /// Returns the number of transactions currently in the pool.
+    #[method(name = "transactionCount")]
+    fn transaction_count(&self) -> RpcResult<usize>;
+
+    /// Removes all transactions from the pool.
+    #[method(name = "clearTxpool")]
+    fn clear_txpool(&self) -> RpcResult<()>;
+
+    /// Subscription that emits the pool transaction count on an interval.
+    #[subscription(name = "subscribeTransactionCount", item = usize)]
+    fn subscribe_transaction_count(
+        &self,
+        #[argument(rename = "delay")] delay: Option<u64>,
+    ) -> SubscriptionResult;
+}
+```
+
+### Step 2: Implement the trait
+
+```rust
+use reth_ethereum::pool::TransactionPool;
+use std::time::Duration;
+use tokio::time::sleep;
+
+pub struct TxpoolExt<Pool> {
+    pool: Pool,
+}
+
+impl<Pool> TxpoolExtApiServer for TxpoolExt<Pool>
+where
+    Pool: TransactionPool + Clone + 'static,
+{
+    fn transaction_count(&self) -> RpcResult<usize> {
+        Ok(self.pool.pool_size().total)
+    }
+
+    fn clear_txpool(&self) -> RpcResult<()> {
+        let all_tx_hashes = self.pool.all_transaction_hashes();
+        self.pool.remove_transactions(all_tx_hashes);
+        Ok(())
+    }
+
+    fn subscribe_transaction_count(
+        &self,
+        pending_subscription_sink: PendingSubscriptionSink,
+        delay: Option<u64>,
+    ) -> SubscriptionResult {
+        let pool = self.pool.clone();
+        let delay = delay.unwrap_or(10);
+
+        tokio::spawn(async move {
+            let sink = match pending_subscription_sink.accept().await {
+                Ok(sink) => sink,
+                Err(e) => {
+                    eprintln!("failed to accept subscription: {e}");
+                    return;
+                }
+            };
+
+            loop {
+                sleep(Duration::from_secs(delay)).await;
+                let msg = SubscriptionMessage::from(
+                    serde_json::value::to_raw_value(&pool.pool_size().total)
+                        .expect("serialize"),
+                );
+                let _ = sink.send(msg).await;
+            }
+        });
+
+        Ok(())
+    }
+}
+```
+
+### Step 3: Register with NodeBuilder
+
+Use `extend_rpc_modules` to access the configured node context and merge your extension into all enabled transports:
+
+```rust
+use clap::Parser;
+use reth_ethereum::{
+    cli::{chainspec::EthereumChainSpecParser, interface::Cli},
+    node::EthereumNode,
+};
+
+/// Custom CLI args that add an `--enable-ext` flag.
+#[derive(Debug, Clone, Copy, Default, clap::Args)]
+struct RethCliTxpoolExt {
+    #[arg(long)]
+    pub enable_ext: bool,
+}
+
+fn main() {
+    Cli::<EthereumChainSpecParser, RethCliTxpoolExt>::parse()
+        .run(async move |builder, args| {
+            let handle = builder
+                .node(EthereumNode::default())
+                .extend_rpc_modules(move |ctx| {
+                    if !args.enable_ext {
+                        return Ok(());
+                    }
+
+                    // Access pool and other components from the node context
+                    let pool = ctx.pool().clone();
+                    let ext = TxpoolExt { pool };
+
+                    // Merge into all configured transports (HTTP, WS, IPC)
+                    ctx.modules.merge_configured(ext.into_rpc())?;
+
+                    println!("txpool extension enabled");
+                    Ok(())
+                })
+                .launch_with_debug_capabilities()
+                .await?;
+
+            handle.wait_for_node_exit().await
+        })
+        .unwrap();
+}
+```
+
+Run the node with your extension enabled:
+
+```bash
+cargo run -- node --http --ws --enable-ext
+```
+
+Query the custom method:
+
+```bash
+cast rpc txpoolExt_transactionCount
+```
+
+<Note>
+  `ctx.modules.merge_configured` merges your extension into every transport that has been configured (HTTP, WS, and IPC). Use `merge_http`, `merge_ws`, or `merge_ipc` to target specific transports.
+</Note>
+
+## Accessing node resources in RPC handlers
+
+The `extend_rpc_modules` context (`RpcContext`) provides access to all major node components:
+
+```rust
+.extend_rpc_modules(|ctx| {
+    let pool      = ctx.pool().clone();        // TransactionPool
+    let provider  = ctx.provider().clone();    // StateProvider / BlockReader
+    let network   = ctx.network().clone();     // NetworkHandle
+    let payload   = ctx.payload_builder();     // PayloadBuilderHandle (if available)
+
+    // Use these to build your RPC handler
+    Ok(())
+})
+```
+
+## Transport configuration
+
+Enable transports with CLI flags or `RpcServerArgs` in code:
+
+<Tabs>
+  <Tab title="CLI flags">
+    ```bash
+    reth node \
+        --http \
+        --http.addr 0.0.0.0 \
+        --http.port 8545 \
+        --http.api eth,debug,net \
+        --ws \
+        --ws.addr 0.0.0.0 \
+        --ws.port 8546 \
+        --ipc
+    ```
+  </Tab>
+  <Tab title="NodeConfig (code)">
+    ```rust
+    use reth_ethereum::node::core::args::RpcServerArgs;
+    use reth_ethereum::node::core::node_config::NodeConfig;
+
+    let node_config = NodeConfig::test()
+        .with_rpc(
+            RpcServerArgs::default()
+                .with_http()
+                .with_http_api("eth,debug,net,txpool")
+                .with_ws(),
+        );
+    ```
+  </Tab>
+</Tabs>
+
+## Testing custom RPC methods
+
+`jsonrpsee` provides HTTP and WebSocket test clients. The example below shows the test setup from `examples/node-custom-rpc`:
+
+```rust
+use jsonrpsee::{
+    http_client::HttpClientBuilder,
+    server::ServerBuilder,
+    ws_client::WsClientBuilder,
+};
+use reth_ethereum::pool::noop::NoopTransactionPool;
+
+async fn start_server() -> std::net::SocketAddr {
+    let server = ServerBuilder::default().build("127.0.0.1:0").await.unwrap();
+    let addr = server.local_addr().unwrap();
+    let api = TxpoolExt { pool: NoopTransactionPool::default() };
+    let handle = server.start(api.into_rpc());
+    tokio::spawn(handle.stopped());
+    addr
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_transaction_count_http() {
+    let addr = start_server().await;
+    let client = HttpClientBuilder::default()
+        .build(format!("http://{addr}"))
+        .unwrap();
+    let count = TxpoolExtApiClient::transaction_count(&client).await.unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_subscribe_transaction_count_ws() {
+    let addr = start_server().await;
+    let client = WsClientBuilder::default()
+        .build(format!("ws://{addr}"))
+        .await
+        .unwrap();
+
+    let mut sub = TxpoolExtApiClient::subscribe_transaction_count(&client, None)
+        .await
+        .expect("subscribe");
+
+    let first = sub.next().await.unwrap().unwrap();
+    assert_eq!(first, 0);
+}
+```
+
+## Standard namespaces
+
+Reth implements the following standard RPC namespaces:
+
+| Namespace | Description |
+|---|---|
+| `eth_` | Core Ethereum API: transactions, blocks, state, logs, gas estimation, calls |
+| `debug_` | Debug tracing and inspection of blocks and transactions |
+| `trace_` | OpenEthereum-compatible transaction and block tracing |
+| `net_` | Network information (peer count, version, listening status) |
+| `web3_` | Node information and utilities |
+| `txpool_` | Transaction pool contents and status |
+| `admin_` | Node administration (add/remove peers, node info) |
+
+<Tip>
+  Use `--http.api` to control which namespaces are exposed. Exposing `admin_` or `debug_` to untrusted networks is a security risk — restrict them to localhost or internal networks.
+</Tip>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Network" href="/sdk/node-components/network">
+    Network state exposed through `net_` and `admin_` RPC methods.
+  </Card>
+  <Card title="Transaction pool" href="/sdk/node-components/pool">
+    `eth_sendRawTransaction` and `txpool_` methods interact directly with the pool.
+  </Card>
+  <Card title="EVM" href="/sdk/node-components/evm">
+    `eth_call` and `eth_estimateGas` use the EVM for stateless simulation.
+  </Card>
+  <Card title="ExEx overview" href="/exex/overview">
+    Execution Extensions for streaming chain data out of the node.
+  </Card>
+</CardGroup>

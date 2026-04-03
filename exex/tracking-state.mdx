@@ -1,0 +1,217 @@
+---
+title: "Tracking State"
+description: "Maintain state across blocks in an ExEx by implementing Future on a struct, and handle reorgs by subtracting reverted data."
+---
+
+In this guide you will learn how to keep track of state inside an ExEx that persists across blocks and correctly rolls back on reorgs.
+
+This continues from the [Hello World](/exex/hello-world) example.
+
+## Turning an ExEx into a struct
+
+The Hello World ExEx used a plain async function. Async functions cannot hold mutable state that you can inspect from outside — which makes testing difficult — and they cannot implement the `Future` trait manually.
+
+To hold state across notifications, convert the ExEx into a struct that implements `Future`:
+
+```rust
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{ready, Context, Poll},
+};
+
+use futures_util::{FutureExt, TryStreamExt};
+use reth::{api::FullNodeComponents, builder::NodeTypes, primitives::EthPrimitives};
+use reth_exex::{ExExContext, ExExEvent, ExExNotification};
+use reth_node_ethereum::EthereumNode;
+use reth_tracing::tracing::info;
+
+struct MyExEx<Node: FullNodeComponents> {
+    ctx: ExExContext<Node>,
+}
+
+impl<Node: FullNodeComponents<Types: NodeTypes<Primitives = EthPrimitives>>> Future
+    for MyExEx<Node>
+{
+    type Output = eyre::Result<()>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+
+        while let Some(notification) = ready!(this.ctx.notifications.try_next().poll_unpin(cx))? {
+            match &notification {
+                ExExNotification::ChainCommitted { new } => {
+                    info!(committed_chain = ?new.range(), "Received commit");
+                }
+                ExExNotification::ChainReorged { old, new } => {
+                    info!(from_chain = ?old.range(), to_chain = ?new.range(), "Received reorg");
+                }
+                ExExNotification::ChainReverted { old } => {
+                    info!(reverted_chain = ?old.range(), "Received revert");
+                }
+            };
+
+            if let Some(committed_chain) = notification.committed_chain() {
+                this.ctx
+                    .events
+                    .send(ExExEvent::FinishedHeight(committed_chain.tip().num_hash()))?;
+            }
+        }
+
+        Poll::Ready(Ok(()))
+    }
+}
+
+fn main() -> eyre::Result<()> {
+    reth::cli::Cli::parse_args().run(async move |builder, _| {
+        let handle = builder
+            .node(EthereumNode::default())
+            .install_exex("my-exex", async move |ctx| Ok(MyExEx { ctx }))
+            .launch_with_debug_capabilities()
+            .await?;
+
+        handle.wait_for_node_exit().await
+    })
+}
+```
+
+A few things to note about the `Future` implementation:
+
+1. `self.get_mut()` — you cannot use `self` directly inside `poll`. You must acquire a mutable reference to the data inside the `Pin`. See [the async book on pinning](https://rust-lang.github.io/async-book/part-reference/pinning.html) for details.
+2. `ready!(...)` — the [`ready!`](https://doc.rust-lang.org/std/task/macro.ready.html) macro propagates `Poll::Pending` immediately if the underlying future is not ready. Without it, the loop would busy-spin.
+3. `poll_unpin(cx)` — because `try_next()` returns a future, it must be polled with the current task context `cx`.
+4. `install_exex` now returns the struct directly: `Ok(MyExEx { ctx })`.
+
+<Warning>
+Having state inside an async function is also possible, but it makes testing harder because you cannot access those variables to assert the state of your ExEx. A struct implementing `Future` exposes its fields directly.
+</Warning>
+
+## Adding state fields
+
+The ExEx below tracks two values:
+
+- `first_block` — the block number of the first block committed since the ExEx started.
+- `transactions` — the running total of committed transactions, decremented on reorgs.
+
+```rust
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{ready, Context, Poll},
+};
+
+use alloy_primitives::BlockNumber;
+use futures_util::{FutureExt, TryStreamExt};
+use reth::{
+    api::{BlockBody, FullNodeComponents},
+    builder::NodeTypes,
+    primitives::EthPrimitives,
+};
+use reth_exex::{ExExContext, ExExEvent};
+use reth_node_ethereum::EthereumNode;
+use reth_tracing::tracing::info;
+
+struct MyExEx<Node: FullNodeComponents> {
+    ctx: ExExContext<Node>,
+    /// First block that was committed since the start of the ExEx.
+    first_block: Option<BlockNumber>,
+    /// Total number of transactions committed.
+    transactions: u64,
+}
+
+impl<Node: FullNodeComponents> MyExEx<Node> {
+    fn new(ctx: ExExContext<Node>) -> Self {
+        Self { ctx, first_block: None, transactions: 0 }
+    }
+}
+
+impl<Node: FullNodeComponents<Types: NodeTypes<Primitives = EthPrimitives>>> Future
+    for MyExEx<Node>
+{
+    type Output = eyre::Result<()>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+
+        while let Some(notification) = ready!(this.ctx.notifications.try_next().poll_unpin(cx))? {
+            if let Some(reverted_chain) = notification.reverted_chain() {
+                this.transactions = this.transactions.saturating_sub(
+                    reverted_chain.blocks_iter().map(|b| b.body().transaction_count() as u64).sum(),
+                );
+            }
+
+            if let Some(committed_chain) = notification.committed_chain() {
+                this.first_block.get_or_insert(committed_chain.first().number);
+
+                this.transactions += committed_chain
+                    .blocks_iter()
+                    .map(|b| b.body().transaction_count() as u64)
+                    .sum::<u64>();
+
+                this.ctx
+                    .events
+                    .send(ExExEvent::FinishedHeight(committed_chain.tip().num_hash()))?;
+            }
+
+            if let Some(first_block) = this.first_block {
+                info!(%first_block, transactions = %this.transactions, "Total number of transactions");
+            }
+        }
+
+        Poll::Ready(Ok(()))
+    }
+}
+
+fn main() -> eyre::Result<()> {
+    reth::cli::Cli::parse_args().run(async move |builder, _| {
+        let handle = builder
+            .node(EthereumNode::default())
+            .install_exex("my-exex", async move |ctx| Ok(MyExEx::new(ctx)))
+            .launch_with_debug_capabilities()
+            .await?;
+
+        handle.wait_for_node_exit().await
+    })
+}
+```
+
+## How reorg handling works
+
+The `match` block from the Hello World example has been replaced with two independent `if` checks:
+
+**Reverted chain check:**
+```rust
+if let Some(reverted_chain) = notification.reverted_chain() {
+    this.transactions = this.transactions.saturating_sub(
+        reverted_chain.blocks_iter().map(|b| b.body().transaction_count() as u64).sum(),
+    );
+}
+```
+
+`notification.reverted_chain()` returns `Some` for both `ChainReverted` and `ChainReorged`. The reverted transactions are subtracted from the running total using `saturating_sub` — if the ExEx just started and receives a reorg before ever committing a block, `transactions` is still `0` and subtraction must not underflow.
+
+**Committed chain check:**
+```rust
+if let Some(committed_chain) = notification.committed_chain() {
+    this.first_block.get_or_insert(committed_chain.first().number);
+
+    this.transactions += committed_chain
+        .blocks_iter()
+        .map(|b| b.body().transaction_count() as u64)
+        .sum::<u64>();
+
+    this.ctx
+        .events
+        .send(ExExEvent::FinishedHeight(committed_chain.tip().num_hash()))?;
+}
+```
+
+`notification.committed_chain()` returns `Some` for both `ChainCommitted` and `ChainReorged`. The `first_block` is set once using `get_or_insert`, and committed transactions are accumulated. `FinishedHeight` is always emitted for the committed tip.
+
+<Note>
+Both checks run on every notification. For a `ChainReorged` notification, both `reverted_chain()` and `committed_chain()` return `Some`, so both branches execute in sequence — first undoing the old chain, then applying the new one.
+</Note>
+
+## Next steps
+
+If you need to forward ExEx notifications to an external process — for example a consumer that runs in a separate binary — see [Remote ExEx](/exex/remote).

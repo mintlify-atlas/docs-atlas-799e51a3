@@ -1,0 +1,109 @@
+---
+title: "net Namespace"
+description: "Network information for the Reth node: peer count, network version, and connection status."
+---
+
+The `net` namespace provides access to network-level information about the running Reth node: the number of connected peers, the network ID, and whether the node is accepting connections.
+
+Enable the `net` namespace:
+
+```bash
+reth node --http --http.api net
+```
+
+---
+
+## Methods
+
+### `net_version`
+
+Returns the current network ID as a decimal string. This corresponds to the chain ID configured for the node.
+
+Common values:
+
+| Network          | Chain / Network ID |
+| ---------------- | ------------------ |
+| Ethereum Mainnet | `1`                |
+| Sepolia Testnet  | `11155111`         |
+| Holesky Testnet  | `17000`            |
+
+**Parameters:** None
+
+**Returns:** `string` — network ID as a decimal string.
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"net_version","params":[],"id":1}'
+```
+
+```json
+{"jsonrpc":"2.0","id":1,"result":"1"}
+```
+
+---
+
+### `net_peerCount`
+
+Returns the number of peers currently connected to the node. Only established connections are counted.
+
+**Parameters:** None
+
+**Returns:** `U64` — number of connected peers (hex-encoded).
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"net_peerCount","params":[],"id":1}'
+```
+
+```json
+{"jsonrpc":"2.0","id":1,"result":"0xa"}
+```
+
+In this example, `0xa` = 10 peers.
+
+---
+
+### `net_listening`
+
+Returns whether the node is actively listening for incoming network connections. Reth always returns `true`.
+
+**Parameters:** None
+
+**Returns:** `bool`
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"net_listening","params":[],"id":1}'
+```
+
+```json
+{"jsonrpc":"2.0","id":1,"result":true}
+```
+
+---
+
+## Using cast (Foundry)
+
+```bash
+# Get the network ID
+cast rpc net_version
+
+# Get peer count (returns hex)
+cast rpc net_peerCount
+
+# Check if listening
+cast rpc net_listening
+```
+
+---
+
+## Notes
+
+<Tip>
+  Use `net_peerCount` as a quick health check. A peer count of `0` may indicate the node is not connected to the network, possibly due to firewall rules, wrong network configuration, or it still bootstrapping discovery.
+</Tip>
+
+For more detailed peer information — including enode URLs, capabilities, and protocol versions — use `admin_peers` from the [`admin` namespace](/jsonrpc/admin).

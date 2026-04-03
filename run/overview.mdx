@@ -1,0 +1,64 @@
+---
+title: "Running a Node"
+description: "Guide to running a Reth node on Ethereum mainnet, testnets, and private networks."
+---
+
+Reth is an Ethereum execution client. Once installed, you can run it on Ethereum mainnet, public testnets, or a private local network. This section covers everything you need to operate a node — from initial setup through monitoring in production.
+
+<Note>
+  Reth is an **execution client** only. After Ethereum's transition to Proof of Stake, you must also run a **consensus client** (such as Lighthouse, Teku, or Prysm) alongside Reth to sync any post-Merge network. The two clients communicate over the Engine API using a shared JWT secret.
+</Note>
+
+## Node modes
+
+Reth supports two primary operating modes:
+
+| Mode | Flag | Description |
+|---|---|---|
+| Archive node | `reth node` | Retains all historical state. Largest storage footprint, full historical query support. |
+| Full node | `reth node --full` | Prunes historical state. Smaller footprint, suitable for most use cases. |
+
+For a detailed comparison of storage requirements and pruning options, see the [Pruning & Full Node](/run/faq/pruning) FAQ.
+
+## Prerequisites
+
+Before starting Reth, ensure you have:
+
+- Reth installed — see the [installation guide](/installation/overview)
+- A supported consensus client installed (Lighthouse, Teku, Prysm, Nimbus, or Lodestar)
+- Sufficient disk space — see [System Requirements](/run/system-requirements)
+
+## Supported networks
+
+| Network | Chain ID | Notes |
+|---|---|---|
+| Ethereum Mainnet | 1 | Default network |
+| Sepolia Testnet | 11155111 | Public testnet |
+
+## Choose your guide
+
+<Columns cols={2}>
+  <Card title="Ethereum Mainnet" icon="ethereum" href="/run/ethereum">
+    Run Reth on Ethereum mainnet or Sepolia testnet with a consensus client. Covers JWT auth setup, Engine API configuration, and sync tips.
+  </Card>
+  <Card title="Private Testnets" icon="flask" href="/run/private-testnets">
+    Spin up a private local network using Kurtosis and Docker. Useful for development, integration testing, or validating functionality at scale.
+  </Card>
+</Columns>
+
+## Configuration and monitoring
+
+<Columns cols={2}>
+  <Card title="Configuration" icon="sliders" href="/run/configuration">
+    Configure sync stages, P2P networking, pruning, and session behavior using the `reth.toml` config file.
+  </Card>
+  <Card title="Monitoring" icon="chart-line" href="/run/monitoring">
+    Enable Prometheus metrics, set up a Grafana dashboard, and export traces with OpenTelemetry.
+  </Card>
+</Columns>
+
+## Frequently asked questions
+
+- [Pruning & Full Node](/run/faq/pruning) — Storage management, archive vs. full node tradeoffs
+- [Ports](/run/faq/ports) — Default network port configuration and how to change them
+- [FAQ & Troubleshooting](/run/faq) — Common issues and solutions

@@ -1,0 +1,163 @@
+---
+title: "FAQ & Troubleshooting"
+description: "Answers to common questions about running, configuring, and debugging Reth."
+---
+
+Frequently asked questions about running Reth as a node operator. For detailed topics, see the subpages:
+
+<CardGroup cols={2}>
+  <Card title="Pruning & Full Node" icon="database" href="/run/faq/pruning">
+    Archive, full, and pruned node modes, disk expectations, and RPC availability.
+  </Card>
+  <Card title="Ports & Networking" icon="network-wired" href="/run/faq/ports">
+    Default ports, firewall rules, and how to change port bindings.
+  </Card>
+</CardGroup>
+
+## Sync
+
+<AccordionGroup>
+  <Accordion title="Why is my initial sync taking so long?">
+    Initial sync speed depends on your hardware and network conditions. Reth performs a staged sync that downloads headers, bodies, and then executes all historical transactions.
+
+    Key factors that affect sync time:
+
+    - **Disk I/O** — Reth is disk-bound during sync. An NVMe SSD is strongly recommended. HDDs and SATA SSDs will be significantly slower.
+    - **CPU** — Transaction execution uses multiple cores. More cores help.
+    - **Network** — A fast, stable connection speeds up block and receipt downloads.
+
+    You can monitor sync progress with the built-in metrics dashboard. See the [monitoring guide](/run/monitoring) for details.
+  </Accordion>
+
+  <Accordion title="My node stopped syncing. What should I check?">
+    Start with the logs — Reth emits structured logs that indicate the current stage and any errors.
+
+    Common causes:
+
+    - **No peers** — Check that port `30303` (TCP and UDP) is reachable from the internet. Without peers, Reth cannot download chain data.
+    - **Disk full** — Reth will stop if it runs out of disk space. Archive nodes require at least 2.14 TB on mainnet.
+    - **Out of memory** — If the process is killed by the OOM killer, check available RAM and consider running a full node (`--full`) instead of an archive node.
+
+    Check peer count with:
+
+    ```bash
+    cast rpc net_peerCount --rpc-url http://localhost:8545
+    ```
+  </Accordion>
+
+  <Accordion title="Can I change node type (archive, full, pruned) after initial sync?">
+    No. The node type is set when you first run Reth and **cannot be changed** after the initial sync completes. Converting an archive node to a full or pruned node, or vice versa, is not supported. You must resync from scratch to change node type.
+
+    See [Pruning & Full Node](/run/faq/pruning) for an explanation of each mode.
+  </Accordion>
+</AccordionGroup>
+
+## Disk usage
+
+<AccordionGroup>
+  <Accordion title="How much disk space does Reth require?">
+    Disk usage depends on the node mode:
+
+    | Mode         | Approximate size (mainnet, April 2024, block ~19.6M) |
+    | ------------ | ---------------------------------------------------- |
+    | Archive node | ≥ 2.14 TB                                            |
+    | Full node    | ≥ 1.13 TB                                            |
+    | Pruned node  | Varies — depends on which segments are pruned        |
+
+    See [Pruning & Full Node](/run/faq/pruning) for a per-segment breakdown of how much space each prunable segment occupies.
+  </Accordion>
+
+  <Accordion title="How do I reduce disk usage?">
+    Run Reth as a full node with the `--full` flag, or configure custom pruning in `reth.toml`. For maximum space savings, use the `--minimal` flag, which prunes sender recovery, transaction lookup, receipts, and retains only the last 10,064 blocks of account and storage history.
+
+    ```bash
+    reth node \
+        --full \
+        --authrpc.jwtsecret /path/to/secret \
+        --authrpc.addr 127.0.0.1 \
+        --authrpc.port 8551
+    ```
+
+    Full details and the TOML configuration equivalent are in [Pruning & Full Node](/run/faq/pruning).
+  </Accordion>
+</AccordionGroup>
+
+## Memory
+
+<AccordionGroup>
+  <Accordion title="Reth is using a lot of memory. Is this normal?">
+    Reth uses memory aggressively during sync to cache data and speed up execution. Memory usage should stabilize once the initial sync is complete.
+
+    If the process is being killed by the OOM killer, consider:
+
+    - Switching from archive to full node mode (`--full`) to reduce working set size.
+    - Adding swap space as a short-term buffer (though this will slow performance).
+    - Checking for memory leaks using jemalloc profiling — see [Profiling Reth](https://paradigmxyz.github.io/reth/run/profiling) for instructions.
+  </Accordion>
+</AccordionGroup>
+
+## RPC
+
+<AccordionGroup>
+  <Accordion title="Some RPC methods are returning errors or missing data.">
+    If you are running a pruned or full node, some RPC methods are only available for recent blocks. For example, `eth_call` on a full node only works for the last 10,064 blocks.
+
+    Methods that depend on historical state (account history, storage history) will not work for older blocks on pruned or full nodes. See the [RPC support tables in the pruning guide](/run/faq/pruning#rpc-support) for a full breakdown by segment.
+
+    If you need full historical RPC access, you must run an archive node.
+  </Accordion>
+
+  <Accordion title="How do I enable the HTTP or WebSocket RPC?">
+    RPC is not enabled by default. Pass the appropriate flags when starting Reth:
+
+    ```bash
+    # Enable HTTP RPC on default port 8545
+    reth node --http
+
+    # Enable WebSocket RPC on default port 8546
+    reth node --ws
+
+    # Enable both with custom addresses
+    reth node \
+        --http \
+        --http.addr 0.0.0.0 \
+        --http.port 8545 \
+        --ws \
+        --ws.addr 0.0.0.0 \
+        --ws.port 8546
+    ```
+
+    <Warning>
+      Do not expose RPC ports to the public internet without authentication or a firewall rule. Anyone with access to the RPC port can query your node and, if you have `eth_sendRawTransaction` enabled, submit transactions.
+    </Warning>
+  </Accordion>
+</AccordionGroup>
+
+## Peer connectivity
+
+<AccordionGroup>
+  <Accordion title="My node has zero peers. How do I fix this?">
+    A node with no peers cannot sync. The most common cause is a firewall blocking the P2P port.
+
+    Ensure port `30303` is open for both TCP and UDP inbound and outbound traffic. You can verify with:
+
+    ```bash
+    # Check if the port is reachable from another machine
+    nc -vzu <your-node-ip> 30303
+    ```
+
+    Also check that Reth is not behind a NAT that does not forward the port. If you are behind NAT, configure port forwarding on your router for port `30303`.
+
+    See [Ports & Networking](/run/faq/ports) for all port details.
+  </Accordion>
+
+  <Accordion title="How do I check how many peers my node has?">
+    Use the `net_peerCount` RPC method:
+
+    ```bash
+    cast rpc net_peerCount --rpc-url http://localhost:8545
+    ```
+
+    Or check the Reth metrics dashboard if you have monitoring enabled. See the [monitoring guide](/run/monitoring).
+  </Accordion>
+</AccordionGroup>

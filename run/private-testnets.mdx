@@ -1,0 +1,112 @@
+---
+title: "Private Testnets"
+description: "Spin up a private Ethereum testnet with Reth using Kurtosis and Docker."
+---
+
+Private testnets let you validate functionality, test integrations, or experiment with network configurations without interacting with a public chain. This guide uses [Kurtosis' ethereum-package](https://github.com/ethpandaops/ethereum-package) to spin up a local multi-node network with Reth.
+
+## Prerequisites
+
+You need both Kurtosis and Docker installed and running before proceeding:
+
+- [Install Kurtosis](https://docs.kurtosis.com/install/)
+- [Install Docker](https://docs.docker.com/get-docker/)
+
+The [`ethereum-package`](https://github.com/ethpandaops/ethereum-package) is a general-purpose Ethereum testnet definition that can instantiate private testnets at any scale over Docker or Kubernetes, locally or in the cloud.
+
+## Running a local testnet with Docker
+
+This walkthrough creates a 2-node private network using Reth paired with Lighthouse and Teku as consensus clients.
+
+<Steps>
+  <Step title="Define your network parameters">
+    In your home directory, create a file named `network_params.yaml` with the following contents:
+
+    ```yaml
+    participants:
+        - el_type: reth
+          el_image: ghcr.io/paradigmxyz/reth
+          cl_type: lighthouse
+          cl_image: sigp/lighthouse:latest
+        - el_type: reth
+          el_image: ghcr.io/paradigmxyz/reth
+          cl_type: teku
+          cl_image: consensys/teku:latest
+    ```
+
+    <Tip>
+      If you want to test a locally built or modified Reth image, build it with a custom tag and use that tag in the `el_image` field instead of the upstream image.
+    </Tip>
+  </Step>
+
+  <Step title="Spin up the network">
+    Run the following command to start your private testnet:
+
+    ```bash
+    kurtosis run github.com/ethpandaops/ethereum-package --args-file ~/network_params.yaml --image-download always
+    ```
+
+    Kurtosis creates an [enclave](https://docs.kurtosis.com/advanced-concepts/enclaves/) — an ephemeral, isolated environment — and boots the nodes within it. Genesis data is generated automatically using the [ethereum-genesis-generator](https://github.com/ethpandaops/ethereum-genesis-generator).
+  </Step>
+
+  <Step title="Inspect the running network">
+    Once the enclave is ready, Kurtosis prints a summary of all running services and their exposed ports. A typical output looks like this:
+
+    ```console
+    INFO[2024-07-09T12:01:35+02:00] ========================================================
+    INFO[2024-07-09T12:01:35+02:00] ||          Created enclave: silent-mountain          ||
+    INFO[2024-07-09T12:01:35+02:00] ========================================================
+    Name:            silent-mountain
+    UUID:            cb5d0a7d0e7c
+    Status:          RUNNING
+    Creation Time:   Tue, 09 Jul 2024 12:00:03 CEST
+
+    ========================================== User Services ==========================================
+    UUID           Name                       Ports                                         Status
+    f21d5ca3061f   el-1-reth-lighthouse       engine-rpc: 8551/tcp -> 127.0.0.1:32803       RUNNING
+                                              metrics: 9001/tcp -> http://127.0.0.1:32804
+                                              rpc: 8545/tcp -> 127.0.0.1:32801
+                                              tcp-discovery: 30303/tcp -> 127.0.0.1:32805
+                                              ws: 8546/tcp -> 127.0.0.1:32802
+    e234b3b4a440   el-2-reth-teku             engine-rpc: 8551/tcp -> 127.0.0.1:32808       RUNNING
+                                              metrics: 9001/tcp -> http://127.0.0.1:32809
+                                              rpc: 8545/tcp -> 127.0.0.1:32806
+                                              ws: 8546/tcp -> 127.0.0.1:32807
+    0853f809c300   cl-1-lighthouse-reth       http: 4000/tcp -> http://127.0.0.1:32811      RUNNING
+                                              metrics: 5054/tcp -> http://127.0.0.1:32812
+    f81cd467efe3   cl-2-teku-reth             http: 4000/tcp -> http://127.0.0.1:32814      RUNNING
+                                              metrics: 8008/tcp -> http://127.0.0.1:32815
+    ```
+
+    You now have two full Ethereum nodes running locally — one Reth/Lighthouse pair and one Reth/Teku pair. Refer to the [Kurtosis CLI docs](https://docs.kurtosis.com/cli) to learn how to inspect and interact with your enclave.
+  </Step>
+</Steps>
+
+## Running on Kubernetes
+
+Kurtosis packages are portable across environments. The same `network_params.yaml` file works on Kubernetes without modification, making it straightforward to scale your testnet to larger infrastructure.
+
+Follow the [Kurtosis Kubernetes setup docs](https://docs.kurtosis.com/k8s/) to deploy on a Kubernetes cluster.
+
+## Adding optional services
+
+The `ethereum-package` supports a number of additional services you can enable in your `network_params.yaml`. See the [full configuration reference](https://github.com/ethpandaops/ethereum-package#configuration) for all available options.
+
+<AccordionGroup>
+  <Accordion title="Grafana + Prometheus">
+    Enable metrics collection and visualization for all nodes in the network. Prometheus scrapes metrics from each EL and CL client, and Grafana provides dashboards out of the box.
+  </Accordion>
+  <Accordion title="Transaction spammer (tx-fuzz)">
+    [`tx-fuzz`](https://github.com/MariusVanDerWijden/tx-fuzz) generates and submits a high volume of transactions to stress-test your network under load.
+  </Accordion>
+  <Accordion title="Network metrics collector">
+    The [beacon-metrics-gazer](https://github.com/dapplion/beacon-metrics-gazer) collects and aggregates network-level metrics across all beacon nodes in your enclave.
+  </Accordion>
+  <Accordion title="MEV workflow simulation (mev-boost)">
+    Flashbots' `mev-boost` implementation of PBS (Proposer-Builder Separation) can be included to test or simulate MEV workflows in your private network.
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  For questions about configuring or troubleshooting the `ethereum-package`, reach out on the [Kurtosis Discord](https://discord.com/invite/6Jjp9c89z9).
+</Note>

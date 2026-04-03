@@ -1,0 +1,515 @@
+---
+title: "eth Namespace"
+description: "Standard Ethereum JSON-RPC API methods for interacting with accounts, blocks, transactions, logs, gas, and state."
+---
+
+The `eth` namespace provides the standard Ethereum JSON-RPC methods as defined in the [Ethereum execution API specification](https://ethereum.github.io/execution-apis/api-documentation). These methods let you query balances, send transactions, interact with smart contracts, and subscribe to chain events.
+
+Enable the `eth` namespace:
+
+```bash
+reth node --http --http.api eth
+```
+
+<Note>
+  Some `eth_` methods — such as `eth_sign`, `eth_sendTransaction`, and `eth_accounts` — require a local signer (keystore). Reth does not manage keys by default; use an external signer or hardware wallet.
+</Note>
+
+## Accounts & State
+
+<AccordionGroup>
+  <Accordion title="eth_accounts">
+    Returns a list of addresses owned by the connected client.
+
+    **Parameters:** None
+
+    **Returns:** `Array<Address>` — list of addresses held by the node signer.
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_accounts","params":[],"id":1}'
+    ```
+
+    ```json
+    {"jsonrpc":"2.0","id":1,"result":["0xd8da6bf26964af9d7eed9e03e53415d37aa96045"]}
+    ```
+  </Accordion>
+
+  <Accordion title="eth_getBalance">
+    Returns the balance of the account at the given address.
+
+    **Parameters:**
+    - `address` — `Address`: the account address
+    - `blockId` — `BlockId` (optional): block number, hash, or tag (`latest`, `safe`, `finalized`, `earliest`, `pending`)
+
+    **Returns:** `U256` — balance in wei (hex-encoded).
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_getBalance","params":["0xd8da6bf26964af9d7eed9e03e53415d37aa96045","latest"],"id":1}'
+    ```
+
+    ```json
+    {"jsonrpc":"2.0","id":1,"result":"0x1bc16d674ec80000"}
+    ```
+  </Accordion>
+
+  <Accordion title="eth_getTransactionCount">
+    Returns the number of transactions sent from an address (i.e., the account nonce).
+
+    **Parameters:**
+    - `address` — `Address`
+    - `blockId` — `BlockId` (optional): defaults to `latest`
+
+    **Returns:** `U256` — nonce (hex-encoded).
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_getTransactionCount","params":["0xd8da6bf26964af9d7eed9e03e53415d37aa96045","latest"],"id":1}'
+    ```
+
+    ```json
+    {"jsonrpc":"2.0","id":1,"result":"0x1a"}
+    ```
+  </Accordion>
+
+  <Accordion title="eth_getCode">
+    Returns the compiled bytecode of a smart contract at the given address.
+
+    **Parameters:**
+    - `address` — `Address`
+    - `blockId` — `BlockId` (optional)
+
+    **Returns:** `Bytes` — hex-encoded bytecode. Returns `0x` for non-contract accounts.
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_getCode","params":["0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","latest"],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="eth_getStorageAt">
+    Returns the value stored at a specific storage slot for a given contract.
+
+    **Parameters:**
+    - `address` — `Address`
+    - `slot` — `JsonStorageKey` — the storage position (hex-encoded)
+    - `blockId` — `BlockId` (optional)
+
+    **Returns:** `B256` — the storage value.
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_getStorageAt","params":["0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","0x0","latest"],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="eth_getAccount">
+    Returns the account object for an address at a given block. The response includes balance, nonce, code hash, and storage root.
+
+    **Parameters:**
+    - `address` — `Address`
+    - `blockId` — `BlockId`
+
+    **Returns:** `Account | null`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_getAccount","params":["0xd8da6bf26964af9d7eed9e03e53415d37aa96045","latest"],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="eth_getProof">
+    Returns the Merkle proof for an account and its storage slots (EIP-1186). Used to verify account state against the state root.
+
+    **Parameters:**
+    - `address` — `Address`
+    - `keys` — `Array<JsonStorageKey>` — storage slots to prove
+    - `blockId` — `BlockId` (optional)
+
+    **Returns:** `EIP1186AccountProofResponse` — account proof and storage proofs.
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_getProof","params":["0xd8da6bf26964af9d7eed9e03e53415d37aa96045",["0x0"],"latest"],"id":1}'
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Blocks
+
+<AccordionGroup>
+  <Accordion title="eth_blockNumber">
+    Returns the number of the most recently mined block.
+
+    **Parameters:** None
+
+    **Returns:** `U256` — current block number (hex-encoded).
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
+    ```
+
+    ```json
+    {"jsonrpc":"2.0","id":1,"result":"0x13a0b4c"}
+    ```
+  </Accordion>
+
+  <Accordion title="eth_getBlockByNumber">
+    Returns block information by block number or tag.
+
+    **Parameters:**
+    - `number` — `BlockNumberOrTag`
+    - `full` — `bool` — if `true`, returns full transaction objects; if `false`, returns only transaction hashes
+
+    **Returns:** `Block | null`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest",false],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="eth_getBlockByHash">
+    Returns block information by block hash.
+
+    **Parameters:**
+    - `hash` — `B256`
+    - `full` — `bool`
+
+    **Returns:** `Block | null`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_getBlockByHash","params":["0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3",false],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="eth_getBlockReceipts">
+    Returns all transaction receipts for a given block.
+
+    **Parameters:**
+    - `blockId` — `BlockId`
+
+    **Returns:** `Array<TransactionReceipt> | null`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_getBlockReceipts","params":["latest"],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="eth_getBlockTransactionCountByHash / eth_getBlockTransactionCountByNumber">
+    Returns the number of transactions in a block.
+
+    **Parameters:**
+    - `eth_getBlockTransactionCountByHash`: `hash` — `B256`
+    - `eth_getBlockTransactionCountByNumber`: `number` — `BlockNumberOrTag`
+
+    **Returns:** `U256 | null`
+
+    ```bash
+    # By number
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_getBlockTransactionCountByNumber","params":["latest"],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="eth_getHeaderByNumber / eth_getHeaderByHash">
+    Returns only the block header (without transactions or uncles).
+
+    **Parameters:**
+    - `eth_getHeaderByNumber`: `number` — `BlockNumberOrTag`
+    - `eth_getHeaderByHash`: `hash` — `B256`
+
+    **Returns:** `Header | null`
+  </Accordion>
+</AccordionGroup>
+
+## Transactions
+
+<AccordionGroup>
+  <Accordion title="eth_getTransactionByHash">
+    Returns the transaction object for a given transaction hash.
+
+    **Parameters:**
+    - `hash` — `B256`
+
+    **Returns:** `Transaction | null`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_getTransactionByHash","params":["0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="eth_getTransactionReceipt">
+    Returns the receipt for a mined transaction.
+
+    **Parameters:**
+    - `hash` — `B256`
+
+    **Returns:** `TransactionReceipt | null` — `null` if the transaction is pending.
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":["0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="eth_getTransactionByBlockHashAndIndex / eth_getTransactionByBlockNumberAndIndex">
+    Returns a transaction by its position within a block.
+
+    **Parameters:**
+    - `hash` or `number` — block identifier
+    - `index` — `Index` — transaction index (hex-encoded)
+
+    **Returns:** `Transaction | null`
+  </Accordion>
+
+  <Accordion title="eth_getTransactionBySenderAndNonce">
+    Returns a transaction by sender address and nonce.
+
+    **Parameters:**
+    - `address` — `Address`
+    - `nonce` — `U64`
+
+    **Returns:** `Transaction | null`
+  </Accordion>
+
+  <Accordion title="eth_sendRawTransaction">
+    Submits a pre-signed, RLP-encoded transaction to the network.
+
+    **Parameters:**
+    - `data` — `Bytes` — signed transaction data
+
+    **Returns:** `B256` — transaction hash.
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_sendRawTransaction","params":["0x02f872..."],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="eth_sendTransaction">
+    Constructs and signs a transaction using a key held by the node, then submits it.
+
+    <Warning>Requires a local signer. Reth does not manage keys by default.</Warning>
+
+    **Parameters:**
+    - `request` — transaction request object (`from`, `to`, `value`, `data`, `gas`, etc.)
+
+    **Returns:** `B256` — transaction hash.
+  </Accordion>
+</AccordionGroup>
+
+## Calls & Simulation
+
+<AccordionGroup>
+  <Accordion title="eth_call">
+    Executes a new message call without creating a transaction on the blockchain. Useful for reading contract state or simulating transactions.
+
+    **Parameters:**
+    - `request` — transaction request object
+    - `blockId` — `BlockId` (optional): block to execute against
+    - `stateOverrides` — `StateOverride` (optional): temporarily override account state
+    - `blockOverrides` — `BlockOverrides` (optional): temporarily override block fields
+
+    **Returns:** `Bytes` — the return value of the call.
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{
+        "jsonrpc":"2.0","method":"eth_call","id":1,
+        "params":[{"to":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","data":"0x18160ddd"},"latest"]
+      }'
+    ```
+  </Accordion>
+
+  <Accordion title="eth_estimateGas">
+    Generates an estimate of the gas required for a transaction to succeed. This is an estimate; actual gas used may differ.
+
+    **Parameters:**
+    - `request` — transaction request object
+    - `blockId` — `BlockId` (optional)
+    - `stateOverrides` — `StateOverride` (optional)
+
+    **Returns:** `U256` — estimated gas (hex-encoded).
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{
+        "jsonrpc":"2.0","method":"eth_estimateGas","id":1,
+        "params":[{"from":"0xd8da6bf26964af9d7eed9e03e53415d37aa96045","to":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","data":"0xd0e30db0","value":"0xde0b6b3a7640000"}]
+      }'
+    ```
+  </Accordion>
+
+  <Accordion title="eth_createAccessList">
+    Generates an [EIP-2930](https://eips.ethereum.org/EIPS/eip-2930) access list for a transaction. The access list contains all storage slots and addresses the transaction touches, which can reduce gas costs when explicitly provided.
+
+    **Parameters:**
+    - `request` — transaction request
+    - `blockId` — `BlockId` (optional)
+    - `stateOverride` — `StateOverride` (optional)
+
+    **Returns:** `AccessListResult` — `{ accessList, gasUsed }`.
+  </Accordion>
+
+  <Accordion title="eth_simulateV1">
+    Executes an arbitrary number of transactions on top of the requested state. Transactions are packed into individual blocks. Overrides can be provided per block.
+
+    **Parameters:**
+    - `payload` — `SimulatePayload`
+    - `blockId` — `BlockId` (optional)
+
+    **Returns:** `Array<SimulatedBlock>`
+  </Accordion>
+
+  <Accordion title="eth_callMany">
+    Simulates an arbitrary number of transactions at an arbitrary blockchain index, with optional state overrides.
+
+    **Parameters:**
+    - `bundles` — `Array<Bundle>`
+    - `stateContext` — `StateContext` (optional)
+    - `stateOverride` — `StateOverride` (optional)
+
+    **Returns:** `Array<Array<EthCallResponse>>`
+  </Accordion>
+</AccordionGroup>
+
+## Gas & Fees
+
+<AccordionGroup>
+  <Accordion title="eth_gasPrice">
+    Returns the current gas price in wei.
+
+    **Parameters:** None
+
+    **Returns:** `U256` — gas price in wei.
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_gasPrice","params":[],"id":1}'
+    ```
+
+    ```json
+    {"jsonrpc":"2.0","id":1,"result":"0x3b9aca00"}
+    ```
+  </Accordion>
+
+  <Accordion title="eth_maxPriorityFeePerGas">
+    Returns the suggested EIP-1559 priority fee (tip) per gas in wei.
+
+    **Parameters:** None
+
+    **Returns:** `U256`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_maxPriorityFeePerGas","params":[],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="eth_blobBaseFee">
+    Returns the current blob base fee in wei, as introduced in EIP-4844.
+
+    **Parameters:** None
+
+    **Returns:** `U256`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_blobBaseFee","params":[],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="eth_feeHistory">
+    Returns historical base fee and priority fee data for a range of blocks. Useful for estimating appropriate fees for EIP-1559 transactions.
+
+    **Parameters:**
+    - `blockCount` — `U64` — number of blocks to include
+    - `newestBlock` — `BlockNumberOrTag`
+    - `rewardPercentiles` — `Array<float64>` (optional) — percentiles of priority fees to return per block
+
+    **Returns:** `FeeHistory` — `{ baseFeePerGas, gasUsedRatio, oldestBlock, reward }`.
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"eth_feeHistory","params":["0x4","latest",[25,50,75]],"id":1}'
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Logs & Filters
+
+<Note>
+  Log filtering methods (`eth_getLogs`, `eth_newFilter`, `eth_getFilterChanges`, etc.) are part of the `eth_filter` API. See the [Ethereum JSON-RPC spec](https://ethereum.github.io/execution-apis/api-documentation) for full details.
+</Note>
+
+Key filter methods supported by Reth:
+
+| Method                    | Description                                               |
+| ------------------------- | --------------------------------------------------------- |
+| `eth_getLogs`             | Returns logs matching a filter object                     |
+| `eth_newFilter`           | Creates a new log filter, returns filter ID               |
+| `eth_newBlockFilter`      | Creates a filter for new block hashes                     |
+| `eth_newPendingTransactionFilter` | Creates a filter for new pending transaction hashes |
+| `eth_getFilterChanges`    | Returns new events since last poll for a given filter ID  |
+| `eth_getFilterLogs`       | Returns all logs for a given filter ID                    |
+| `eth_uninstallFilter`     | Removes a filter by ID                                    |
+
+## Subscriptions (WebSocket / IPC only)
+
+Subscriptions require a WebSocket or IPC connection. Use `eth_subscribe` to create a subscription and `eth_unsubscribe` to cancel it.
+
+```bash
+# Subscribe to new block headers (WebSocket example via wscat)
+# {"jsonrpc":"2.0","id":1,"method":"eth_subscribe","params":["newHeads"]}
+```
+
+Supported subscription types:
+
+| Type                   | Description                                    |
+| ---------------------- | ---------------------------------------------- |
+| `newHeads`             | New block headers as they are mined            |
+| `logs`                 | New logs matching an optional filter           |
+| `newPendingTransactions` | New pending transaction hashes               |
+| `syncing`              | Sync status changes                            |
+
+## Other Methods
+
+| Method                      | Description                                                   |
+| --------------------------- | ------------------------------------------------------------- |
+| `eth_protocolVersion`       | Returns the Ethereum protocol version                         |
+| `eth_syncing`               | Returns sync status or `false` if fully synced                |
+| `eth_chainId`               | Returns the chain ID (EIP-155)                                |
+| `eth_sign`                  | Signs a message with an account key                           |
+| `eth_signTransaction`       | Signs a transaction without broadcasting it                   |
+| `eth_signTypedData`         | Signs typed data per EIP-712                                  |
+| `eth_getRawTransactionByHash` | Returns the EIP-2718 binary-encoded transaction             |
+| `eth_getAccountInfo`        | Returns balance, nonce, and code for an address               |
+| `eth_getBlockAccessListByBlockHash` | Returns the EIP-7928 block access list by hash        |
+| `eth_getBlockAccessListByBlockNumber` | Returns the EIP-7928 block access list by number    |

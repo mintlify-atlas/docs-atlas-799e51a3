@@ -1,0 +1,94 @@
+---
+title: "Introduction"
+description: "Reth is a modular, high-performance Ethereum execution client written in Rust, suitable for node operators, developers, stakers, and MEV searchers."
+---
+
+Reth (short for Rust Ethereum) is an **Ethereum Execution Layer (EL)** implementation focused on being user-friendly, highly modular, fast, and efficient. It is compatible with all Ethereum consensus clients that support the [Engine API](https://github.com/ethereum/execution-apis/tree/main/src/engine), originally built and driven forward by [Paradigm](https://paradigm.xyz), and licensed under the Apache and MIT licenses.
+
+Reth is production ready, suitable for mission-critical environments such as staking, high-uptime RPC services, MEV extraction, on-chain indexing, simulations, and P2P activities.
+
+## Goals
+
+### Modularity
+
+Every component of Reth is built to be used as a library: well-tested, heavily documented, and benchmarked. Developers can import the node's crates, mix and match, and innovate on top of them.
+
+Examples of such usage include spinning up standalone P2P networks, talking directly to a node's database, or "unbundling" the node into only the components you need. Reth is licensed under the Apache/MIT permissive license to make this as friction-free as possible.
+
+### Performance
+
+Reth uses Rust and the [Erigon staged-sync](https://erigon.substack.com/p/erigon-stage-sync-and-control-flows) node architecture to achieve high performance. It also uses battle-tested Ethereum libraries including [Alloy](https://github.com/alloy-rs/alloy/) and [revm](https://github.com/bluealloy/revm/), optimized via [Foundry](https://github.com/foundry-rs/foundry/).
+
+### Client diversity
+
+The Ethereum protocol becomes more antifragile when no single node implementation dominates. If there is a software bug, the network will not finalize a bad block. By building a new client, Reth contributes to Ethereum's antifragility.
+
+## Who is this for?
+
+<CardGroup cols={2}>
+  <Card title="Node operators" icon="server">
+    Run a full or archive node on Ethereum mainnet, testnets, or a private devnet with straightforward configuration.
+  </Card>
+  <Card title="Stakers" icon="shield-check">
+    Reth is production-ready and trusted by institutions like Coinbase for production staking infrastructure.
+  </Card>
+  <Card title="MEV searchers & block builders" icon="bolt">
+    Powers [rbuilder](https://github.com/flashbots/rbuilder), an open-source block builder, due to its performance and developer-friendly design.
+  </Card>
+  <Card title="Developers & SDK users" icon="cube">
+    Use individual Reth crates as a library to build custom Ethereum nodes, indexers, rollups, and ZK applications.
+  </Card>
+  <Card title="Data engineers & indexers" icon="database">
+    Run in archive mode to access the full history of the Ethereum blockchain for analytics, indexing, and data processing.
+  </Card>
+  <Card title="L2 infrastructure" icon="layers">
+    Powers production L2 sequencers such as [Base](https://www.base.org/) and rollup-as-a-service providers like [Conduit](https://conduit.xyz).
+  </Card>
+</CardGroup>
+
+## Node types
+
+Reth supports two node modes:
+
+- **Full node**: Stores and processes the entire blockchain, validates blocks and transactions, and participates in the consensus process. Suitable for most use cases where historical state access is not required.
+- **Archive node**: Stores the entire history of the Ethereum blockchain. Required for applications that need access to historical state data such as analytics, indexing, and data engineering workflows.
+
+## Security
+
+Reth implements the Ethereum specification as defined in [ethereum/execution-specs](https://github.com/ethereum/execution-specs/). The following measures are taken to ensure the node is built securely:
+
+- EVM state tests run on every [Revm pull request](https://github.com/bluealloy/revm/blob/main/.github/workflows/ethereum-tests.yml)
+- [Hive tests](https://github.com/paradigmxyz/reth/blob/main/.github/workflows/hive.yml) run every 24 hours
+- Multiple nodes are regularly resynced from scratch
+- Nodes are operated at the tip of Ethereum mainnet and various testnets
+- Extensive unit tests, fuzz tests, and documentation with aggressive lint rules
+
+Reth v1.0.0 was audited by [Sigma Prime](https://sigmaprime.io/), the developers of the Lighthouse consensus client. [Revm](https://github.com/bluealloy/revm/) (the EVM used in Reth) was audited by [Guido Vranken](https://twitter.com/guidovranken), the #1 [Ethereum Bug Bounty](https://ethereum.org/en/bug-bounty) recipient.
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation/overview">
+    Install Reth using a pre-built binary, Docker, or build from source.
+  </Card>
+  <Card title="Run a node" icon="play" href="/run/overview">
+    Connect to Ethereum mainnet, a testnet, or a private devnet.
+  </Card>
+  <Card title="Developer SDK" icon="cube" href="/sdk/overview">
+    Use Reth crates as a library to build custom blockchain infrastructure.
+  </Card>
+  <Card title="JSON-RPC API" icon="code" href="/jsonrpc/intro">
+    Query your node using the standard Ethereum JSON-RPC API.
+  </Card>
+</CardGroup>
+
+## Community
+
+<CardGroup cols={2}>
+  <Card title="GitHub" icon="github" href="https://github.com/paradigmxyz/reth">
+    Browse the source code, open issues, and contribute to Reth.
+  </Card>
+  <Card title="Telegram" icon="telegram" href="https://t.me/paradigm_reth">
+    Join the community chat to get help and discuss development.
+  </Card>
+</CardGroup>

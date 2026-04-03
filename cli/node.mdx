@@ -1,0 +1,337 @@
+---
+title: "reth node"
+description: "Start the Reth Ethereum execution node. Full flag reference for networking, RPC, engine API, transaction pool, pruning, and more."
+---
+
+The `reth node` command starts the Ethereum execution client. It connects to a consensus client over the Engine API, participates in the P2P network, and serves JSON-RPC requests.
+
+```bash
+reth node --help
+```
+
+## Quick examples
+
+<Tabs>
+  <Tab title="Archive node">
+    Default mode. Retains all historical state. Requires the most disk space.
+
+    ```bash
+    reth node \
+      --authrpc.jwtsecret /path/to/jwt.hex \
+      --authrpc.addr 127.0.0.1 \
+      --authrpc.port 8551
+    ```
+  </Tab>
+  <Tab title="Full node">
+    Prunes historical state. Significantly less disk space with broad RPC support.
+
+    ```bash
+    reth node --full \
+      --authrpc.jwtsecret /path/to/jwt.hex
+    ```
+  </Tab>
+  <Tab title="With HTTP RPC">
+    Enable the HTTP JSON-RPC server on the default port (8545).
+
+    ```bash
+    reth node \
+      --http \
+      --http.api eth,net,web3,debug \
+      --authrpc.jwtsecret /path/to/jwt.hex
+    ```
+  </Tab>
+  <Tab title="Dev / testing">
+    Start a local PoA chain with pre-funded accounts. No consensus client needed.
+
+    ```bash
+    reth node --dev --http --http.api eth,net,web3
+    ```
+  </Tab>
+</Tabs>
+
+## General options
+
+| Flag | Default | Description |
+|---|---|---|
+| `--config <FILE>` | — | Path to TOML configuration file |
+| `--chain <CHAIN_OR_PATH>` | `mainnet` | Chain to run. Built-in: `mainnet`, `sepolia`, `holesky`, `hoodi`, `dev`. Or path to a custom chain spec JSON |
+| `--instance <INSTANCE>` | — | Run multiple nodes on the same machine. Offsets all default ports. Max 200 instances |
+| `--with-unused-ports` | — | Bind all sockets to random unused OS ports. Mutually exclusive with `--instance` |
+
+## Datadir
+
+| Flag | Default | Description |
+|---|---|---|
+| `--datadir <DATA_DIR>` | OS data dir | Root directory for all Reth data. Linux: `$HOME/.local/share/reth/`, macOS: `$HOME/Library/Application Support/reth/` |
+| `--datadir.static-files <PATH>` | — | Absolute path for static file storage |
+| `--datadir.rocksdb <PATH>` | — | Absolute path for RocksDB storage |
+| `--datadir.pprof-dumps <PATH>` | — | Absolute path for pprof dump files |
+
+## Metrics
+
+| Flag | Default | Description |
+|---|---|---|
+| `--metrics <PROMETHEUS>` | — | Enable Prometheus metrics at the given address (e.g., `0.0.0.0:9001`) |
+| `--metrics.prometheus.push.url <URL>` | — | Push gateway URL for Prometheus remote write |
+| `--metrics.prometheus.push.interval <SECONDS>` | `5` | Push interval in seconds |
+
+## Networking
+
+<AccordionGroup>
+  <Accordion title="Discovery">
+    | Flag | Default | Description |
+    |---|---|---|
+    | `-d`, `--disable-discovery` | — | Disable the discovery service entirely |
+    | `--disable-dns-discovery` | — | Disable DNS-based discovery |
+    | `--disable-discv4-discovery` | — | Disable Discv4 peer discovery |
+    | `--enable-discv5-discovery` | — | Enable Discv5 peer discovery |
+    | `--disable-nat` | — | Disable NAT discovery |
+    | `--discovery.addr <ADDR>` | `0.0.0.0` | UDP address for Discv4 peer discovery |
+    | `--discovery.port <PORT>` | `30303` | UDP port for Discv4 peer discovery |
+    | `--discovery.v5.addr <ADDR>` | — | UDP IPv4 address for Discv5 |
+    | `--discovery.v5.port <PORT>` | `9200` | UDP IPv4 port for Discv5 |
+    | `--discovery.v5.lookup-interval <SECONDS>` | `20` | Interval for Discv5 lookup queries |
+  </Accordion>
+
+  <Accordion title="Peers and connections">
+    | Flag | Default | Description |
+    |---|---|---|
+    | `--addr <ADDR>` | `0.0.0.0` | Network listening address |
+    | `--port <PORT>` | `30303` | Network listening port |
+    | `--trusted-peers <ENODES>` | — | Comma-separated enode URLs for trusted peers |
+    | `--trusted-only` | — | Connect only to trusted peers |
+    | `--bootnodes <ENODES>` | — | Comma-separated enode URLs for bootstrap. Falls back to network defaults |
+    | `--peers-file <FILE>` | — | Path to the known peers file. Peers are written on shutdown and read on startup |
+    | `--identity <IDENTITY>` | `reth/<VERSION>/<ARCH>` | Custom node identity string |
+    | `--p2p-secret-key <PATH>` | — | Path to the private key file for this node |
+    | `--p2p-secret-key-hex <HEX>` | — | Hex-encoded private key for this node |
+    | `--no-persist-peers` | — | Do not persist peers between restarts |
+    | `--nat <NAT>` | `any` | NAT resolution method: `any`, `none`, `upnp`, `publicip`, `extip:<IP>` |
+    | `--max-outbound-peers <N>` | `100` | Maximum outbound peer connections |
+    | `--max-inbound-peers <N>` | `30` | Maximum inbound peer connections |
+    | `--max-peers <N>` | — | Total peer limit (splits ~2:1 inbound:outbound). Mutually exclusive with the individual max flags |
+    | `--netrestrict <CIDR>` | — | Restrict connections to IP ranges (comma-separated CIDR masks) |
+    | `--enforce-enr-fork-id` | — | Require peers to have a verified fork ID before joining the peer set |
+  </Accordion>
+
+  <Accordion title="Transaction propagation">
+    | Flag | Default | Description |
+    |---|---|---|
+    | `--disable-tx-gossip` | — | Disable gossiping transactions to peers |
+    | `--tx-propagation-policy <POLICY>` | `All` | Determines which peers transactions are gossiped to |
+    | `--tx-ingress-policy <POLICY>` | `All` | Determines which peers' transactions are accepted |
+    | `--tx-propagation-mode <MODE>` | `sqrt` | How new pending transactions are propagated. Examples: `sqrt`, `all`, `max:10` |
+    | `--max-tx-reqs <N>` | `130` | Max concurrent `GetPooledTransactions` requests |
+    | `--max-tx-reqs-peer <N>` | `1` | Max concurrent `GetPooledTransactions` requests per peer |
+    | `--max-seen-tx-history <N>` | `320` | Max seen transaction hashes to remember per peer |
+    | `--max-pending-imports <N>` | `4096` | Max transactions to import concurrently |
+  </Accordion>
+</AccordionGroup>
+
+## RPC
+
+<AccordionGroup>
+  <Accordion title="HTTP JSON-RPC">
+    | Flag | Default | Description |
+    |---|---|---|
+    | `--http` | — | Enable the HTTP JSON-RPC server |
+    | `--http.addr <ADDR>` | `127.0.0.1` | HTTP server listen address |
+    | `--http.port <PORT>` | `8545` | HTTP server listen port |
+    | `--http.api <MODULES>` | — | Comma-separated RPC modules to enable. Options: `admin`, `debug`, `eth`, `net`, `trace`, `txpool`, `web3`, `rpc`, `reth`, `ots`, `flashbots`, `miner`, `mev`, `testing` |
+    | `--http.corsdomain <DOMAIN>` | — | Allowed CORS origins for HTTP requests |
+    | `--http.disable-compression` | — | Disable response compression |
+  </Accordion>
+
+  <Accordion title="WebSocket JSON-RPC">
+    | Flag | Default | Description |
+    |---|---|---|
+    | `--ws` | — | Enable the WebSocket JSON-RPC server |
+    | `--ws.addr <ADDR>` | `127.0.0.1` | WebSocket server listen address |
+    | `--ws.port <PORT>` | `8546` | WebSocket server listen port |
+    | `--ws.origins <ORIGINS>` | — | Allowed WebSocket origins |
+    | `--ws.api <MODULES>` | — | RPC modules for WebSocket (same options as `--http.api`) |
+  </Accordion>
+
+  <Accordion title="IPC">
+    | Flag | Default | Description |
+    |---|---|---|
+    | `--ipcdisable` | — | Disable the IPC server |
+    | `--ipcpath <PATH>` | `<CACHE_DIR>.ipc` | IPC socket path |
+    | `--ipc.permissions <OCTAL>` | system umask | Permissions for the IPC socket file, in octal format |
+  </Accordion>
+
+  <Accordion title="Engine API (consensus layer)">
+    <Note>
+      The Engine API is how your consensus client (Lighthouse, Prysm, Teku, etc.) drives the execution layer. JWT authentication is required.
+    </Note>
+
+    | Flag | Default | Description |
+    |---|---|---|
+    | `--authrpc.addr <ADDR>` | `127.0.0.1` | Engine API server listen address |
+    | `--authrpc.port <PORT>` | `8551` | Engine API server listen port |
+    | `--authrpc.jwtsecret <PATH>` | auto-generated | Path to JWT secret for Engine API authentication. Auto-generated and stored at `<datadir>/<chain>/jwt.hex` if not specified |
+    | `--auth-ipc` | — | Enable the Engine API over IPC |
+    | `--auth-ipc.path <PATH>` | `<CACHE_DIR>_engine_api.ipc` | IPC socket path for Engine API |
+    | `--disable-auth-server` | — | Disable the Engine API server entirely |
+    | `--rpc.jwtsecret <HEX>` | — | JWT secret for the regular HTTP/WS RPC servers (not the Engine API) |
+  </Accordion>
+
+  <Accordion title="RPC limits and caching">
+    | Flag | Default | Description |
+    |---|---|---|
+    | `--rpc.max-request-size <MB>` | `15` | Max RPC request payload size for HTTP and WS |
+    | `--rpc.max-response-size <MB>` | `160` | Max RPC response payload size |
+    | `--rpc.max-connections <N>` | `500` | Maximum RPC server connections |
+    | `--rpc.max-subscriptions-per-connection <N>` | `1024` | Max concurrent subscriptions per connection |
+    | `--rpc.max-tracing-requests <N>` | `<CPU cores - 2>` | Max concurrent tracing requests |
+    | `--rpc.max-blocking-io-requests <N>` | `256` | Max concurrent blocking IO requests (eth_call, eth_estimateGas, etc.) |
+    | `--rpc.max-trace-filter-blocks <N>` | `100` | Max blocks per `trace_filter` request |
+    | `--rpc.max-blocks-per-filter <N>` | `100000` | Max blocks scanned per filter request. `0` = entire chain |
+    | `--rpc.max-logs-per-response <N>` | `20000` | Max log entries per response. `0` = no limit |
+    | `--rpc.gascap <GAS>` | `50000000` | Gas cap for `eth_call` and trace methods |
+    | `--rpc.evm-memory-limit <BYTES>` | `4294967295` | Max EVM memory allocation per RPC request |
+    | `--rpc.txfeecap <ETH>` | `1.0` | Max transaction fee (ether) sendable via RPC. `0` = no cap |
+    | `--rpc.eth-proof-window <BLOCKS>` | `0` | Max blocks from tip for historical proof generation |
+    | `--rpc.proof-permits <N>` | `25` | Max concurrent `eth_getProof` requests |
+    | `--rpc.pending-block <KIND>` | `full` | Pending block behavior: `full`, `empty`, or `none` |
+  </Accordion>
+</AccordionGroup>
+
+## Transaction pool
+
+<AccordionGroup>
+  <Accordion title="Pool sizing">
+    | Flag | Default | Description |
+    |---|---|---|
+    | `--txpool.pending-max-count <N>` | `10000` | Max transactions in the pending sub-pool |
+    | `--txpool.pending-max-size <MB>` | `20` | Max size of the pending sub-pool |
+    | `--txpool.basefee-max-count <N>` | `10000` | Max transactions in the basefee sub-pool |
+    | `--txpool.basefee-max-size <MB>` | `20` | Max size of the basefee sub-pool |
+    | `--txpool.queued-max-count <N>` | `10000` | Max transactions in the queued sub-pool |
+    | `--txpool.queued-max-size <MB>` | `20` | Max size of the queued sub-pool |
+    | `--txpool.blobpool-max-count <N>` | `10000` | Max transactions in the blob pool |
+    | `--txpool.blobpool-max-size <MB>` | `20` | Max size of the blob pool |
+    | `--txpool.max-account-slots <N>` | `16` | Max executable transaction slots per account |
+  </Accordion>
+
+  <Accordion title="Fees and validation">
+    | Flag | Default | Description |
+    |---|---|---|
+    | `--txpool.pricebump <PCT>` | `10` | Price bump percentage required to replace a transaction |
+    | `--txpool.minimal-protocol-fee <GWEI>` | `7` | Minimum base fee accepted by the protocol |
+    | `--txpool.minimum-priority-fee <GWEI>` | — | Minimum priority fee for transaction acceptance |
+    | `--txpool.gas-limit <GAS>` | `30000000` | Default gas limit enforced for pool transactions |
+    | `--txpool.max-tx-input-bytes <BYTES>` | `131072` | Max size of a single transaction (128 KiB) |
+    | `--txpool.disable-blobs-support` | — | Disable EIP-4844 blob transaction support |
+    | `--blobpool.pricebump <PCT>` | `100` | Price bump to replace an existing blob transaction |
+  </Accordion>
+
+  <Accordion title="Local transactions">
+    | Flag | Default | Description |
+    |---|---|---|
+    | `--txpool.nolocals` | — | Disable local transaction exemptions |
+    | `--txpool.locals <ADDRS>` | — | Addresses to treat as local |
+    | `--txpool.no-local-transactions-propagation` | — | Disable propagation of local transactions |
+    | `--txpool.transactions-backup <PATH>` | — | Path to persist local transactions on shutdown |
+    | `--txpool.disable-transactions-backup` | — | Disable transaction backup to disk |
+  </Accordion>
+</AccordionGroup>
+
+## Pruning
+
+Run a full node (pruned) or configure fine-grained pruning:
+
+| Flag | Description |
+|---|---|
+| `--full` | Run a full node. Stores only the most recent safe-distance block states |
+| `--minimal` | Maximum pruning with smallest static files. Prunes sender recovery, tx lookup, receipts |
+| `--prune.block-interval <N>` | Minimum pruning interval in blocks |
+| `--prune.sender-recovery.full` | Prune all sender recovery data |
+| `--prune.sender-recovery.distance <N>` | Keep sender recovery only for the last N+1 blocks |
+| `--prune.transaction-lookup.full` | Prune all transaction lookup data |
+| `--prune.receipts.full` | Prune all receipt data |
+| `--prune.receipts.pre-merge` | Prune receipts before the Merge block |
+| `--prune.account-history.full` | Prune all account history |
+| `--prune.storage-history.full` | Prune all storage history data |
+
+## Database
+
+| Flag | Default | Description |
+|---|---|---|
+| `--db.log-level <LEVEL>` | — | MDBX log level: `fatal`, `error`, `warn`, `notice`, `verbose`, `debug`, `trace`, `extra` |
+| `--db.exclusive <BOOL>` | — | Open in exclusive/monopolistic mode (useful for NFS volumes) |
+| `--db.max-size <SIZE>` | `8TB` | Maximum MDBX map size. Node stops if exceeded |
+| `--db.page-size <SIZE>` | `4KB` | MDBX page size. Only configurable at database creation — changing it later requires re-sync |
+| `--db.growth-step <SIZE>` | — | Database growth step size |
+| `--db.read-transaction-timeout <SECONDS>` | — | Read transaction timeout. `0` = no timeout |
+| `--db.max-readers <N>` | — | Max concurrent database readers |
+| `--db.sync-mode <MODE>` | — | Controls how aggressively the database syncs to disk |
+
+## Dev testnet
+
+<Note>
+  The `--dev` flag is intended for local development only. It runs a proof-of-authority chain with 20 pre-funded accounts.
+</Note>
+
+| Flag | Default | Description |
+|---|---|---|
+| `--dev` | — | Start in dev mode. Enables local PoA chain, disables network discovery |
+| `--dev.block-max-transactions <N>` | — | Max transactions to mine per block |
+| `--dev.block-time <DURATION>` | — | Block interval (e.g., `12s`, `500ms`). Auto-mines when transactions arrive if unset |
+| `--dev.mnemonic <MNEMONIC>` | `test test … junk` | BIP-39 mnemonic for dev account derivation |
+
+## Engine configuration
+
+Fine-tune the consensus engine's persistence and caching behavior:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--engine.persistence-threshold <N>` | `2` | Canonical blocks ahead of last persisted block before flushing to disk |
+| `--engine.memory-block-buffer-target <N>` | `0` | Target number of blocks to keep in memory |
+| `--engine.cross-block-cache-size <MB>` | `4096` | Cross-block execution cache size |
+| `--engine.disable-prewarming` | — | Disable parallel state prewarming |
+| `--engine.reserved-cpu-cores <N>` | `1` | CPU cores reserved for non-reth processes |
+| `--engine.state-root-task-timeout <DURATION>` | `1s` | Timeout before spawning a sequential state root fallback |
+
+## ERA import
+
+| Flag | Description |
+|---|---|
+| `--era.enable` | Enable import from ERA1 files at startup |
+| `--era.path <PATH>` | Local directory containing ERA1 files |
+| `--era.url <URL>` | Remote URL to fetch ERA1 files from |
+
+## Engine API setup for consensus clients
+
+The Engine API is the interface between the execution layer (Reth) and the consensus layer (Lighthouse, Prysm, Teku, Nimbus, etc.).
+
+<Steps>
+  <Step title="Generate a JWT secret">
+    If you don't already have a JWT secret, Reth generates one automatically. To specify your own:
+
+    ```bash
+    openssl rand -hex 32 | tee /path/to/jwt.hex
+    ```
+  </Step>
+  <Step title="Start Reth with the Engine API">
+    ```bash
+    reth node \
+      --authrpc.jwtsecret /path/to/jwt.hex \
+      --authrpc.addr 127.0.0.1 \
+      --authrpc.port 8551
+    ```
+  </Step>
+  <Step title="Configure your consensus client">
+    Point your consensus client at Reth's Engine API endpoint. Example for Lighthouse:
+
+    ```bash
+    lighthouse bn \
+      --execution-endpoint http://localhost:8551 \
+      --execution-jwt /path/to/jwt.hex
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  The JWT secret must be identical in both Reth and the consensus client. A mismatch will cause authentication failures and prevent the node from syncing.
+</Warning>

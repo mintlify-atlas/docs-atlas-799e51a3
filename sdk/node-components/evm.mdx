@@ -1,0 +1,299 @@
+---
+title: "EVM"
+description: "Transaction execution, state transitions, and custom EVM configuration in Reth."
+---
+
+The EVM component drives transaction execution and state transitions. It is responsible for running EVM bytecode, applying state changes, and producing receipts. The `ConfigureEvm` trait is the central abstraction that connects EVM configuration to block execution and block building.
+
+## Overview
+
+<CardGroup cols={2}>
+  <Card title="Transaction execution" icon="play">
+    Execute individual transactions against the current state, producing gas usage, logs, and state diffs.
+  </Card>
+  <Card title="Block execution" icon="cube">
+    Process all transactions in a block sequentially, apply block rewards and system calls, then verify the post-state.
+  </Card>
+  <Card title="Block building" icon="hammer">
+    Select and order transactions from the pool, execute them, and assemble a valid sealed block for proposal.
+  </Card>
+  <Card title="Custom precompiles" icon="microchip">
+    Add or override precompiled contracts to implement custom cryptographic operations or chain-specific behavior.
+  </Card>
+</CardGroup>
+
+## Architecture
+
+```
+ConfigureEvm (trait)
+├── EvmFactory       — creates EVM instances for individual transactions
+├── BlockExecutorFactory — creates BlockExecutors for full block processing
+└── BlockAssembler   — assembles sealed blocks from executed transactions
+```
+
+The `ConfigureEvm` trait ties these three layers together. Each layer is generic, letting you replace only the parts you need.
+
+## ConfigureEvm trait
+
+`ConfigureEvm` is the unified interface for all EVM operations in Reth. It is implemented by `EthEvmConfig` for standard Ethereum chains.
+
+```rust
+use reth_evm::ConfigureEvm;
+
+// Create an executor for a full block
+let mut executor = evm_config.executor(state_db);
+let output = executor.execute(&block)?;
+
+println!("Gas used: {}", output.result.gas_used);
+println!("Receipts: {}", output.result.receipts.len());
+
+// Create a block builder for payload construction
+let mut builder = evm_config.builder_for_next_block(
+    &mut state_db,
+    &parent_header,
+    attributes,
+)?;
+
+// Execute pending transactions from the pool
+builder.apply_transactions(transactions)?;
+
+// Seal the block and compute the state root
+let (sealed_block, bundle_state) = builder.finish()?;
+```
+
+## Executor trait
+
+The `Executor` trait processes individual blocks and accumulates state changes.
+
+```rust
+pub trait Executor<DB: Database>: Sized {
+    type Primitives: NodePrimitives;
+    type Error;
+
+    /// Execute one block, returning receipts and gas used (state changes not yet committed).
+    fn execute_one(
+        &mut self,
+        block: &RecoveredBlock<<Self::Primitives as NodePrimitives>::Block>,
+    ) -> Result<BlockExecutionResult<...>, Self::Error>;
+
+    /// Execute one block and invoke a hook with the resulting EVM state.
+    fn execute_one_with_state_hook<F>(
+        &mut self,
+        block: &RecoveredBlock<...>,
+        state_hook: F,
+    ) -> Result<BlockExecutionResult<...>, Self::Error>
+    where
+        F: OnStateHook + 'static;
+
+    /// Execute the block and consume the executor, returning the full output including bundle state.
+    fn execute(
+        mut self,
+        block: &RecoveredBlock<...>,
+    ) -> Result<BlockExecutionOutput<...>, Self::Error>;
+
+    /// Execute a batch of blocks and return an aggregated ExecutionOutcome.
+    fn execute_batch<'a, I>(self, blocks: I) -> Result<ExecutionOutcome<...>, Self::Error>
+    where
+        I: IntoIterator<Item = &'a RecoveredBlock<...>>;
+}
+```
+
+## Custom EVM: adding a precompile
+
+The example below comes directly from `examples/custom-evm` in the Reth repository. It shows how to create a custom `EvmFactory` that injects an additional precompile for the Prague hardfork.
+
+```rust
+use alloy_evm::{
+    eth::EthEvmContext,
+    precompiles::PrecompilesMap,
+    revm::{
+        handler::EthPrecompiles,
+        precompile::{Precompile, PrecompileId},
+    },
+    EvmFactory,
+};
+use alloy_primitives::{address, Bytes};
+use reth_ethereum::evm::{
+    primitives::{Database, EvmEnv},
+    revm::{
+        context::{BlockEnv, Context, TxEnv},
+        context_interface::result::{EVMError, HaltReason},
+        inspector::{Inspector, NoOpInspector},
+        interpreter::interpreter::EthInterpreter,
+        precompile::{PrecompileOutput, PrecompileResult, Precompiles},
+        primitives::hardfork::SpecId,
+        MainBuilder, MainContext,
+    },
+    EthEvm, EthEvmConfig,
+};
+use std::sync::OnceLock;
+
+/// A custom EVM factory that adds a precompile at Prague.
+#[derive(Debug, Clone, Default)]
+pub struct MyEvmFactory;
+
+impl EvmFactory for MyEvmFactory {
+    type Evm<DB: Database, I: Inspector<EthEvmContext<DB>, EthInterpreter>> =
+        EthEvm<DB, I, Self::Precompiles>;
+    type Tx = TxEnv;
+    type Error<DBError: core::error::Error + Send + Sync + 'static> = EVMError<DBError>;
+    type HaltReason = HaltReason;
+    type Context<DB: Database> = EthEvmContext<DB>;
+    type Spec = SpecId;
+    type BlockEnv = BlockEnv;
+    type Precompiles = PrecompilesMap;
+
+    fn create_evm<DB: Database>(&self, db: DB, input: EvmEnv) -> Self::Evm<DB, NoOpInspector> {
+        let spec = input.cfg_env.spec;
+        let mut evm = Context::mainnet()
+            .with_db(db)
+            .with_cfg(input.cfg_env)
+            .with_block(input.block_env)
+            .build_mainnet_with_inspector(NoOpInspector {})
+            .with_precompiles(PrecompilesMap::from_static(
+                EthPrecompiles::new(spec).precompiles,
+            ));
+
+        // Add custom precompile only for Prague
+        if spec == SpecId::PRAGUE {
+            evm = evm.with_precompiles(PrecompilesMap::from_static(prague_custom()));
+        }
+
+        EthEvm::new(evm, false)
+    }
+
+    fn create_evm_with_inspector<DB: Database, I: Inspector<Self::Context<DB>, EthInterpreter>>(
+        &self,
+        db: DB,
+        input: EvmEnv,
+        inspector: I,
+    ) -> Self::Evm<DB, I> {
+        EthEvm::new(self.create_evm(db, input).into_inner().with_inspector(inspector), true)
+    }
+}
+
+/// Returns the Prague precompile set with an additional custom precompile.
+pub fn prague_custom() -> &'static Precompiles {
+    static INSTANCE: OnceLock<Precompiles> = OnceLock::new();
+    INSTANCE.get_or_init(|| {
+        let mut precompiles = Precompiles::prague().clone();
+        let precompile = Precompile::new(
+            PrecompileId::custom("custom"),
+            // Custom precompile at address 0x999
+            address!("0x0000000000000000000000000000000000000999"),
+            |_, _| PrecompileResult::Ok(PrecompileOutput::new(0, Bytes::new())),
+        );
+        precompiles.extend([precompile]);
+        precompiles
+    })
+}
+```
+
+## Wiring the custom EVM into NodeBuilder
+
+Implement `ExecutorBuilder` and pass it to `NodeBuilder` via `.executor()`:
+
+```rust
+use reth_ethereum::node::{
+    api::{FullNodeTypes, NodeTypes},
+    builder::{components::ExecutorBuilder, BuilderContext, NodeBuilder},
+    core::{args::RpcServerArgs, node_config::NodeConfig},
+    node::EthereumAddOns,
+    EthereumNode,
+};
+use reth_ethereum::chainspec::ChainSpec;
+use reth_ethereum::evm::EthEvmConfig;
+use reth_ethereum::EthPrimitives;
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MyExecutorBuilder;
+
+impl<Node> ExecutorBuilder<Node> for MyExecutorBuilder
+where
+    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = ChainSpec, Primitives = EthPrimitives>>,
+{
+    type EVM = EthEvmConfig<ChainSpec, MyEvmFactory>;
+
+    async fn build_evm(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::EVM> {
+        Ok(EthEvmConfig::new_with_evm_factory(
+            ctx.chain_spec(),
+            MyEvmFactory::default(),
+        ))
+    }
+}
+
+// Wire it in:
+let handle = NodeBuilder::new(node_config)
+    .with_types::<EthereumNode>()
+    .with_components(
+        EthereumNode::components().executor(MyExecutorBuilder::default()),
+    )
+    .with_add_ons(EthereumAddOns::default())
+    .launch()
+    .await?;
+```
+
+## Inspector hooks
+
+Inspectors let you observe every EVM step during execution — useful for tracing, debugging, and custom analysis. Pass an inspector via `create_evm_with_inspector`:
+
+```rust
+use reth_ethereum::evm::revm::inspector::Inspector;
+
+// Implement the Inspector trait for your custom observer
+struct MyInspector;
+
+impl<DB> Inspector<EthEvmContext<DB>, EthInterpreter> for MyInspector {
+    fn step(&mut self, interp: &mut Interpreter, context: &mut EthEvmContext<DB>) {
+        // Called before each EVM opcode executes.
+        // Use interp.current_opcode() and interp.program_counter() to observe execution.
+    }
+}
+
+// Create the EVM with your inspector attached
+let evm = evm_factory.create_evm_with_inspector(db, env, MyInspector);
+```
+
+<Tip>
+  Inspectors are zero-cost when you use `NoOpInspector` — the compiler eliminates the inspector call overhead entirely. Use `NoOpInspector` in production and your custom inspector only in tracing code paths.
+</Tip>
+
+## Block execution flow
+
+<Steps>
+  <Step title="Environment setup">
+    `ConfigureEvm` fills `EvmEnv` with the block context (block number, timestamp, coinbase, base fee, gas limit) and the transaction context (`TxEnv`).
+  </Step>
+  <Step title="System calls">
+    Pre-execution system calls run (e.g., EIP-4788 beacon block root update, EIP-2935 history storage). These modify state before any user transaction runs.
+  </Step>
+  <Step title="Transaction execution">
+    Each transaction is executed in order against the current state. Gas is metered and state changes are accumulated in the `BundleState`.
+  </Step>
+  <Step title="Block rewards">
+    Mining rewards (PoW) or validator withdrawals (PoS) are applied after all transactions.
+  </Step>
+  <Step title="State root computation">
+    The trie is updated with all accumulated state changes and a new state root is computed.
+  </Step>
+  <Step title="Consensus verification">
+    `FullConsensus::validate_block_post_execution` checks gas used, receipt root, and logs bloom against the header.
+  </Step>
+</Steps>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Consensus" href="/sdk/node-components/consensus">
+    Pre- and post-execution block validation that wraps EVM execution.
+  </Card>
+  <Card title="Transaction pool" href="/sdk/node-components/pool">
+    Where transactions come from before the EVM executes them.
+  </Card>
+  <Card title="RPC" href="/sdk/node-components/rpc">
+    `eth_call` and `eth_estimateGas` use the EVM for simulation without state changes.
+  </Card>
+  <Card title="Network" href="/sdk/node-components/network">
+    How executed blocks propagate to peers after construction.
+  </Card>
+</CardGroup>

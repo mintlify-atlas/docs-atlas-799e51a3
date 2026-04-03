@@ -1,0 +1,420 @@
+---
+title: "Remote ExEx"
+description: "Forward ExEx notifications to an external process over gRPC using Tonic, with a server ExEx inside Reth and a standalone consumer binary."
+---
+
+This guide shows how to create an ExEx that forwards all notifications to an external process over gRPC. It uses [Tonic](https://github.com/hyperium/tonic) to define a streaming RPC service.
+
+The project has two binaries:
+
+- **`exex`** — runs Reth with the ExEx installed and a gRPC server that streams notifications.
+- **`consumer`** — connects to the gRPC server and prints notifications.
+
+<Note>
+ExExes run inside the Reth process. "Remote" here means forwarding data out to a separate process — the ExEx itself is still in-process.
+</Note>
+
+## Prerequisites
+
+Install the system dependencies required by Tonic. See the [Tonic dependencies section](https://github.com/hyperium/tonic?tab=readme-ov-file#dependencies) for instructions for your platform.
+
+## Create a new project
+
+Use `--lib` because the project has two custom binary files:
+
+```bash
+cargo new --lib exex-remote
+cd exex-remote
+```
+
+Add the required dependencies to `Cargo.toml`:
+
+```toml Cargo.toml
+[package]
+name = "remote-exex"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# reth
+reth = { git = "https://github.com/paradigmxyz/reth.git" }
+reth-exex = { git = "https://github.com/paradigmxyz/reth.git", features = ["serde"] }
+reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth.git" }
+reth-node-api = { git = "https://github.com/paradigmxyz/reth.git" }
+reth-tracing = { git = "https://github.com/paradigmxyz/reth.git" }
+
+# async
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+futures-util = "0.3"
+
+# grpc
+tonic = "0.11"
+prost = "0.12"
+bincode = "1"
+
+# misc
+eyre = "0.6"
+
+[build-dependencies]
+tonic-build = "0.11"
+
+[[bin]]
+name = "exex"
+path = "src/exex.rs"
+
+[[bin]]
+name = "consumer"
+path = "src/consumer.rs"
+```
+
+## Define the Protobuf schema
+
+Create a `proto/` directory at the project root and add `exex.proto`:
+
+```protobuf proto/exex.proto
+syntax = "proto3";
+
+package exex;
+
+service RemoteExEx {
+  rpc Subscribe(SubscribeRequest) returns (stream ExExNotification) {}
+}
+
+message SubscribeRequest {}
+
+message ExExNotification {
+  bytes data = 1;
+}
+```
+
+The `Subscribe` RPC streams `ExExNotification` messages to the client. The `data` field carries the raw bincode-serialized `ExExNotification` from Reth. A production schema would define all fields explicitly — see the [full remote ExEx example](https://github.com/paradigmxyz/reth-exex-examples/blob/main/remote/proto/exex.proto) for reference.
+
+<Warning>
+This schema uses raw bytes to keep the tutorial concise. For production use, define all notification fields in the Protobuf schema to enable proper schema evolution and interoperability.
+</Warning>
+
+In `src/lib.rs`, tell Tonic where to find the generated code:
+
+```rust src/lib.rs
+pub mod proto {
+    tonic::include_proto!("exex");
+}
+```
+
+## The server binary
+
+### Minimal gRPC server
+
+Start with a minimal gRPC server that listens on `:10000` and is spawned by the node's task executor:
+
+```rust src/exex.rs
+use remote_exex::proto::{
+    self,
+    remote_ex_ex_server::{RemoteExEx, RemoteExExServer},
+};
+use reth_node_ethereum::EthereumNode;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
+use tonic::{transport::Server, Request, Response, Status};
+
+struct ExExService {}
+
+#[tonic::async_trait]
+impl RemoteExEx for ExExService {
+    type SubscribeStream = ReceiverStream<Result<proto::ExExNotification, Status>>;
+
+    async fn subscribe(
+        &self,
+        _request: Request<proto::SubscribeRequest>,
+    ) -> Result<Response<Self::SubscribeStream>, Status> {
+        let (_tx, rx) = mpsc::channel(1);
+
+        Ok(Response::new(ReceiverStream::new(rx)))
+    }
+}
+
+fn main() -> eyre::Result<()> {
+    reth::cli::Cli::parse_args().run(async move |builder, _| {
+        let server = Server::builder()
+            .add_service(RemoteExExServer::new(ExExService {}))
+            .serve("[::1]:10000".parse().unwrap());
+
+        let handle = builder.node(EthereumNode::default()).launch().await?;
+
+        handle.node.task_executor.spawn_critical("gRPC server", async move {
+            server.await.expect("failed to start gRPC server")
+        });
+
+        handle.wait_for_node_exit().await
+    })
+}
+```
+
+At this point the server accepts connections but sends nothing. The next step is to wire it to the ExEx via a broadcast channel.
+
+### Connect the ExEx and gRPC server
+
+Add a `broadcast::Sender<ExExNotification>` to `ExExService`. In `main`, create the channel and clone the sender into both the gRPC service and the ExEx:
+
+```rust src/exex.rs
+use reth_exex::ExExNotification;
+use std::sync::Arc;
+use tokio::sync::broadcast;
+
+// ExExService now holds the broadcast sender
+struct ExExService {
+    notifications: Arc<broadcast::Sender<ExExNotification>>,
+}
+
+fn main() -> eyre::Result<()> {
+    reth::cli::Cli::parse_args().run(async move |builder, _| {
+        let notifications = Arc::new(broadcast::channel(1).0);
+
+        let server = Server::builder()
+            .add_service(RemoteExExServer::new(ExExService {
+                notifications: notifications.clone(),
+            }))
+            .serve("[::1]:10000".parse().unwrap());
+
+        let handle = builder
+            .node(EthereumNode::default())
+            .install_exex("remote-exex", async move |ctx| {
+                Ok(remote_exex(ctx, notifications))
+            })
+            .launch_with_debug_capabilities()
+            .await?;
+
+        handle.node.task_executor.spawn_critical("gRPC server", async move {
+            server.await.expect("failed to start gRPC server")
+        });
+
+        handle.wait_for_node_exit().await
+    })
+}
+```
+
+### Stream notifications to clients
+
+Update `subscribe` to spawn a task that serializes each notification with `bincode` and sends it to the client over a per-connection `mpsc` channel:
+
+```rust src/exex.rs
+#[tonic::async_trait]
+impl RemoteExEx for ExExService {
+    type SubscribeStream = ReceiverStream<Result<proto::ExExNotification, Status>>;
+
+    async fn subscribe(
+        &self,
+        _request: Request<proto::SubscribeRequest>,
+    ) -> Result<Response<Self::SubscribeStream>, Status> {
+        let (tx, rx) = mpsc::channel(1);
+
+        let mut notifications = self.notifications.subscribe();
+        tokio::spawn(async move {
+            while let Ok(notification) = notifications.recv().await {
+                let proto_notification = proto::ExExNotification {
+                    data: bincode::serialize(&notification).expect("failed to serialize"),
+                };
+                tx.send(Ok(proto_notification))
+                    .await
+                    .expect("failed to send notification to client");
+
+                info!("Notification sent to the gRPC client");
+            }
+        });
+
+        Ok(Response::new(ReceiverStream::new(rx)))
+    }
+}
+```
+
+Each call to `subscribe` spawns an independent task. Multiple consumers can subscribe simultaneously.
+
+### The ExEx function
+
+The ExEx receives `ExExNotification`s from the node and forwards them onto the broadcast channel:
+
+```rust src/exex.rs
+async fn remote_exex<Node: FullNodeComponents<Types: NodeTypes<Primitives = EthPrimitives>>>(
+    mut ctx: ExExContext<Node>,
+    notifications: Arc<broadcast::Sender<ExExNotification>>,
+) -> eyre::Result<()> {
+    while let Some(notification) = ctx.notifications.try_next().await? {
+        if let Some(committed_chain) = notification.committed_chain() {
+            ctx.events.send(ExExEvent::FinishedHeight(committed_chain.tip().num_hash()))?;
+        }
+
+        info!("Notification sent to the gRPC server");
+        let _ = notifications.send(notification);
+    }
+
+    Ok(())
+}
+```
+
+`FinishedHeight` is always emitted before forwarding to the broadcast channel so the node can prune state promptly.
+
+### Full server binary
+
+The complete `src/exex.rs` combining all of the above:
+
+```rust src/exex.rs
+use futures_util::TryStreamExt;
+use remote_exex::proto::{
+    self,
+    remote_ex_ex_server::{RemoteExEx, RemoteExExServer},
+};
+use reth::{builder::NodeTypes, primitives::EthPrimitives};
+use reth_exex::{ExExContext, ExExEvent, ExExNotification};
+use reth_node_api::FullNodeComponents;
+use reth_node_ethereum::EthereumNode;
+use reth_tracing::tracing::info;
+use std::sync::Arc;
+use tokio::sync::{broadcast, mpsc};
+use tokio_stream::wrappers::ReceiverStream;
+use tonic::{transport::Server, Request, Response, Status};
+
+struct ExExService {
+    notifications: Arc<broadcast::Sender<ExExNotification>>,
+}
+
+#[tonic::async_trait]
+impl RemoteExEx for ExExService {
+    type SubscribeStream = ReceiverStream<Result<proto::ExExNotification, Status>>;
+
+    async fn subscribe(
+        &self,
+        _request: Request<proto::SubscribeRequest>,
+    ) -> Result<Response<Self::SubscribeStream>, Status> {
+        let (tx, rx) = mpsc::channel(1);
+
+        let mut notifications = self.notifications.subscribe();
+        tokio::spawn(async move {
+            while let Ok(notification) = notifications.recv().await {
+                let proto_notification = proto::ExExNotification {
+                    data: bincode::serialize(&notification).expect("failed to serialize"),
+                };
+                tx.send(Ok(proto_notification))
+                    .await
+                    .expect("failed to send notification to client");
+
+                info!("Notification sent to the gRPC client");
+            }
+        });
+
+        Ok(Response::new(ReceiverStream::new(rx)))
+    }
+}
+
+async fn remote_exex<Node: FullNodeComponents<Types: NodeTypes<Primitives = EthPrimitives>>>(
+    mut ctx: ExExContext<Node>,
+    notifications: Arc<broadcast::Sender<ExExNotification>>,
+) -> eyre::Result<()> {
+    while let Some(notification) = ctx.notifications.try_next().await? {
+        if let Some(committed_chain) = notification.committed_chain() {
+            ctx.events.send(ExExEvent::FinishedHeight(committed_chain.tip().num_hash()))?;
+        }
+
+        info!("Notification sent to the gRPC server");
+        let _ = notifications.send(notification);
+    }
+
+    Ok(())
+}
+
+fn main() -> eyre::Result<()> {
+    reth::cli::Cli::parse_args().run(async move |builder, _| {
+        let notifications = Arc::new(broadcast::channel(1).0);
+
+        let server = Server::builder()
+            .add_service(RemoteExExServer::new(ExExService {
+                notifications: notifications.clone(),
+            }))
+            .serve("[::1]:10000".parse().unwrap());
+
+        let handle = builder
+            .node(EthereumNode::default())
+            .install_exex("remote-exex", async move |ctx| {
+                Ok(remote_exex(ctx, notifications))
+            })
+            .launch_with_debug_capabilities()
+            .await?;
+
+        handle.node.task_executor.spawn_critical("gRPC server", async move {
+            server.await.expect("failed to start gRPC server")
+        });
+
+        handle.wait_for_node_exit().await
+    })
+}
+```
+
+## The consumer binary
+
+The consumer connects to the gRPC server and prints each notification. Increase the max message size to `usize::MAX` because notifications can be large.
+
+<Warning>
+Set `max_encoding_message_size` and `max_decoding_message_size` to `usize::MAX`. The default gRPC message size limit is 4 MB, which is too small for notifications that include full block and receipt data.
+</Warning>
+
+```rust src/consumer.rs
+use remote_exex::proto::{remote_ex_ex_client::RemoteExExClient, SubscribeRequest};
+use reth_exex::ExExNotification;
+use reth_tracing::{tracing::info, RethTracer, Tracer};
+
+#[tokio::main]
+async fn main() -> eyre::Result<()> {
+    let _ = RethTracer::new().init()?;
+
+    let mut client = RemoteExExClient::connect("http://[::1]:10000")
+        .await?
+        .max_encoding_message_size(usize::MAX)
+        .max_decoding_message_size(usize::MAX);
+
+    let mut stream = client.subscribe(SubscribeRequest {}).await?.into_inner();
+    while let Some(notification) = stream.message().await? {
+        let notification: ExExNotification = bincode::deserialize(&notification.data)?;
+
+        match notification {
+            ExExNotification::ChainCommitted { new } => {
+                info!(committed_chain = ?new.range(), "Received commit");
+            }
+            ExExNotification::ChainReorged { old, new } => {
+                info!(from_chain = ?old.range(), to_chain = ?new.range(), "Received reorg");
+            }
+            ExExNotification::ChainReverted { old } => {
+                info!(reverted_chain = ?old.range(), "Received revert");
+            }
+        };
+    }
+
+    Ok(())
+}
+```
+
+## Running
+
+In one terminal, start the ExEx and gRPC server. This example uses Etherscan as a debug consensus client — provide your API key via the environment:
+
+```bash
+export ETHERSCAN_API_KEY={YOUR_API_KEY} && \
+  cargo run --bin exex --release -- node --chain holesky --debug.etherscan
+```
+
+In a second terminal, start the consumer:
+
+```bash
+cargo run --bin consumer --release
+```
+
+The consumer will print log lines for every committed, reorged, or reverted chain that the ExEx receives from Reth.
+
+## When to use a remote ExEx
+
+Use a remote ExEx when:
+
+- You need the consumer to be in a different language than Rust.
+- The consumer must be deployed or scaled independently of the Reth node.
+- You want process isolation so a consumer crash does not affect the node.
+
+For most use cases — indexers, bridges, rollup derivation — an in-process ExEx is simpler, has lower latency (no serialization or network hop), and is easier to reason about. Start in-process and extract to remote only when isolation or polyglot requirements arise.

@@ -1,0 +1,161 @@
+---
+title: "Network"
+description: "P2P networking in Reth: peer discovery, connection management, and the Ethereum wire protocol."
+---
+
+The network component handles all peer-to-peer communication in Reth. It discovers peers, manages connections, propagates transactions, and synchronizes chain data using the Ethereum Wire Protocol (ETH).
+
+## Overview
+
+<CardGroup cols={2}>
+  <Card title="Peer discovery" icon="radar">
+    Find peers via discv4, discv5, and DNS discovery. Boot nodes seed the initial peer set.
+  </Card>
+  <Card title="Connection management" icon="network-wired">
+    Track inbound and outbound sessions with configurable limits, peer scoring, and reputation tracking.
+  </Card>
+  <Card title="Transaction propagation" icon="arrow-right-arrow-left">
+    Broadcast new transactions to peers, with deduplication and optional gossip disabling for private nodes.
+  </Card>
+  <Card title="State synchronization" icon="rotate">
+    Request and serve block headers, bodies, and receipts over the ETH request/response protocol.
+  </Card>
+</CardGroup>
+
+## Architecture
+
+The network stack is composed of a `NetworkManager` that owns a `Swarm`, a `SessionManager`, and a discovery layer. The `NetworkHandle` is the shareable, cloneable frontend used by the rest of the node to interact with the network.
+
+```
+NetworkManager
+├── Discovery
+│   ├── discv4 (UDP-based, EIP-8 handshake)
+│   ├── discv5 (improved security, ENR-based)
+│   └── DNS discovery (peer lists via DNS TXT records)
+├── SessionManager (ETH wire protocol sessions)
+└── Swarm (connection lifecycle)
+```
+
+## Key concepts
+
+### Peer discovery
+
+Reth supports three discovery mechanisms that run in parallel:
+
+- **discv4** — The original UDP-based Ethereum discovery protocol. Finds peers by performing a recursive Kademlia-style lookup from boot nodes.
+- **discv5** — An improved discovery protocol with better security properties, using Ethereum Node Records (ENRs).
+- **DNS discovery** — Fetches peer lists published as DNS TXT records, useful for bootstrapping behind restrictive firewalls.
+
+Boot nodes are hardcoded for mainnet and testnets but are fully configurable via `NetworkConfig`.
+
+### Network mode
+
+Reth adapts its block announcement behavior based on the consensus mechanism:
+
+- **Proof of Stake** — Block broadcasting over devp2p is disabled and treated as a protocol violation. New blocks arrive from the consensus layer (CL) via the Engine API and are requested from peers over devp2p when needed.
+- **Proof of Work** — Block announcements are enabled to propagate new blocks quickly across the network.
+
+### Transaction gossip
+
+The network propagates new pending transactions to peers using a gossip protocol with deduplication. You can disable transaction gossip entirely with the `tx_gossip_disabled` flag — useful for private nodes, bandwidth-constrained deployments, or nodes that ingest transactions out-of-band.
+
+### NAT and external IP
+
+An optional NAT resolver (`NatResolver`) helps the node determine its correct external IP address and advertise it during discovery. Without this, peers behind NAT may not be discoverable.
+
+## NetworkHandle API
+
+`NetworkHandle` is the primary interface for interacting with the network from other node components. It is cheap to clone (backed by an `Arc`).
+
+```rust
+use reth_network_api::{NetworkInfo, Peers, PeersInfo};
+
+// Get the number of active peer connections
+let peer_count = network.num_connected_peers();
+
+// Get the local node's peer ID (derived from the node's secret key)
+let peer_id = network.peer_id();
+
+// Get the local address the node is listening on
+let listen_addr = network.local_addr();
+
+// Add a trusted peer that should always be connected
+network.add_trusted_peer(node_record);
+
+// Remove a peer
+network.remove_peer(peer_id, PeerKind::Basic);
+
+// Ban a peer from reconnecting
+network.reputation_change(peer_id, ReputationChangeKind::BadAnnouncement);
+```
+
+## Configuring the network
+
+Network configuration lives in `NetworkConfig`. The `NetworkConfigBuilder` provides a fluent API for constructing it:
+
+```rust
+use reth_network::{config::rng_secret_key, NetworkConfig};
+use reth_discv4::Discv4ConfigBuilder;
+
+// Generate a random node identity (persist this in production)
+let secret_key = rng_secret_key();
+
+let network_config = NetworkConfig::builder(secret_key)
+    // Set the address to listen for incoming devp2p connections
+    .listener_addr("0.0.0.0:30303".parse()?)
+    // Configure discv4 discovery
+    .discovery(
+        Discv4ConfigBuilder::default()
+            .add_boot_nodes(mainnet_nodes())
+            .build(),
+    )
+    // Disable transaction gossip for a private node
+    .disable_tx_gossip(true)
+    // Build the config (requires a chain client)
+    .build(client);
+```
+
+### Peer limits
+
+You can control how many inbound and outbound connections the node maintains:
+
+```rust
+use reth_network_types::PeersConfig;
+
+let peers_config = PeersConfig::default()
+    .with_max_outbound(100)
+    .with_max_inbound(30);
+```
+
+### Custom sub-protocols
+
+Reth supports adding custom RLPx sub-protocols alongside the built-in ETH protocol. This lets you build custom peer-to-peer messaging on top of the existing connection infrastructure.
+
+```rust
+use reth_network::protocol::IntoRlpxSubProtocol;
+
+// Implement IntoRlpxSubProtocol for your custom protocol handler,
+// then register it on the NetworkManager before launch.
+network_manager.add_rlpx_sub_protocol(my_protocol.into_rlpx_sub_protocol());
+```
+
+<Note>
+  Custom sub-protocols share the same TCP connections as the ETH protocol. They are negotiated during the RLPx handshake and run as separate message streams within the same session.
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Transaction pool" href="/sdk/node-components/pool">
+    How the pool validates and orders transactions before they reach the network.
+  </Card>
+  <Card title="Consensus" href="/sdk/node-components/consensus">
+    Block validation rules and how consensus integrates with the Engine API.
+  </Card>
+  <Card title="RPC" href="/sdk/node-components/rpc">
+    Expose network information through JSON-RPC endpoints.
+  </Card>
+  <Card title="EVM" href="/sdk/node-components/evm">
+    Transaction execution and state transition configuration.
+  </Card>
+</CardGroup>

@@ -1,0 +1,256 @@
+---
+title: "reth db"
+description: "Database debugging utilities for inspecting, querying, and managing the Reth MDBX database and static files."
+---
+
+The `reth db` command provides utilities to inspect and manage the MDBX database and static files that Reth uses for storage.
+
+```bash
+reth db --help
+```
+
+<Warning>
+  Most `reth db` subcommands that modify data (`drop`, `clear`) are destructive and irreversible. Stop the node before running them against a live database.
+</Warning>
+
+## Subcommands
+
+| Subcommand | Description |
+|---|---|
+| `stats` | List all tables with entry counts and sizes |
+| `list` | List the contents of a table (with TUI or JSON output) |
+| `get` | Get the value for a specific key in a table or static file |
+| `checksum` | Calculate the content checksum of a table or static file segment |
+| `copy` | Copy the MDBX database to a new location |
+| `diff` | Create a diff between two database tables or two entire databases |
+| `drop` | Delete all database entries |
+| `clear` | Delete all entries from a specific table |
+| `repair-trie` | Verify trie consistency and output any inconsistencies |
+| `static-file-header` | Read and display a static file segment header |
+| `version` | List current and local database versions |
+| `path` | Print the full path to the database directory |
+| `settings` | Manage storage settings |
+| `prune-checkpoints` | View or set prune checkpoints |
+| `stage-checkpoints` | View or set stage checkpoints |
+| `account-storage` | Get storage size information for an account |
+| `state` | Get account state and storage at a specific block |
+
+## Common options
+
+All `reth db` subcommands accept these flags:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--datadir <DATA_DIR>` | OS data dir | Root Reth data directory |
+| `--chain <CHAIN_OR_PATH>` | `mainnet` | Chain name or path to chain spec JSON |
+| `--config <FILE>` | — | Path to configuration file |
+| `--db.log-level <LEVEL>` | — | MDBX log level: `fatal`, `error`, `warn`, `notice`, `verbose`, `debug`, `trace`, `extra` |
+| `--db.exclusive <BOOL>` | — | Open database in exclusive mode |
+| `--db.max-size <SIZE>` | `8TB` | Maximum MDBX map size |
+
+## reth db stats
+
+List all database tables with their entry counts and sizes, including static file segments.
+
+```bash
+reth db stats
+reth db stats --detailed-sizes --detailed-segments
+```
+
+| Flag | Description |
+|---|---|
+| `--skip-consistency-checks` | Skip static file consistency checks |
+| `--detailed-sizes` | Show only total size for static files (no per-table breakdown) |
+| `--detailed-segments` | Show detailed information per static file segment |
+| `--checksum` | Compute and display a checksum for each table. This traverses the entire database and may take a long time. For individual table checksums, use `reth db checksum` |
+
+## reth db list
+
+Display the contents of a database table. Opens an interactive TUI by default; use `--json` for scripting.
+
+```bash
+# Show the first 5 entries in a table
+reth db list Headers
+
+# Show 20 entries starting from entry 100
+reth db list Headers --skip 100 --len 20
+
+# Output as JSON
+reth db list Headers --json
+
+# Search for a value
+reth db list Transactions --search 0xdeadbeef
+
+# Show only rows larger than 1 KB
+reth db list Receipts --min-row-size 1024
+
+# Count matching rows
+reth db list Transactions --count
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `<TABLE>` | required | Name of the table to list |
+| `-s`, `--skip <N>` | `0` | Skip the first N entries |
+| `-r`, `--reverse` | — | Read entries in reverse order (last entries first) |
+| `-l`, `--len <N>` | `5` | Number of entries to display |
+| `--search <QUERY>` | — | Search keys and values. Prefix with `0x` for binary, or plain text for string search |
+| `--min-row-size <BYTES>` | `0` | Minimum row size in bytes |
+| `--min-key-size <BYTES>` | `0` | Minimum key size in bytes |
+| `--min-value-size <BYTES>` | `0` | Minimum value size in bytes |
+| `-c`, `--count` | — | Return only the count of matching rows |
+| `-j`, `--json` | — | Output as JSON instead of the TUI |
+| `--raw` | — | Output raw bytes instead of decoded values |
+
+<Note>
+  Compressed tables (`Transactions` and `Receipts`) store data in a compressed format. Binary search with `--search` operates on the raw uncompressed bytes, so some matches may be missed.
+</Note>
+
+## reth db get
+
+Retrieve the value for a specific key from a database table or static file segment.
+
+```bash
+# Get a value from an MDBX table
+reth db get mdbx <TABLE> <KEY>
+
+# Get a value from a static file
+reth db get static-file <SEGMENT> <KEY>
+```
+
+The `get` command has two subcommands:
+
+| Subcommand | Description |
+|---|---|
+| `mdbx` | Query an MDBX database table |
+| `static-file` | Query a static file segment |
+
+## reth db checksum
+
+Calculate a content checksum of a specific table or static file segment. Useful for verifying data integrity or comparing two databases.
+
+```bash
+reth db checksum mdbx <TABLE>
+reth db checksum static-file <SEGMENT>
+```
+
+## reth db diff
+
+Compare two database tables or two entire databases to find differences.
+
+```bash
+reth db diff --help
+```
+
+## reth db version
+
+Print the current database format version and the version expected by the running binary.
+
+```bash
+reth db version
+```
+
+Use this to confirm compatibility before upgrading Reth or after restoring a snapshot.
+
+## reth db path
+
+Print the absolute path of the database directory.
+
+```bash
+reth db path
+reth db path --chain sepolia
+```
+
+## reth db drop
+
+Delete all database entries. This removes all data from the MDBX database.
+
+```bash
+reth db drop
+```
+
+<Warning>
+  `reth db drop` deletes all data from the database. This is irreversible. The node must be stopped before running this command.
+</Warning>
+
+## reth db clear
+
+Delete all entries from a specific table without removing the table itself.
+
+```bash
+reth db clear mdbx <TABLE>
+reth db clear static-file <SEGMENT>
+```
+
+## reth db repair-trie
+
+Verify the consistency of the Merkle Patricia Trie and report any inconsistencies. Useful after a crash or unexpected shutdown.
+
+```bash
+reth db repair-trie
+```
+
+## reth db state
+
+Query account state and storage at a specific block number.
+
+```bash
+reth db state --help
+```
+
+## reth db account-storage
+
+Get storage size information for a specific account address.
+
+```bash
+reth db account-storage <ADDRESS>
+```
+
+## Typical workflows
+
+<AccordionGroup>
+  <Accordion title="Inspect database size before migration">
+    Before upgrading Reth or migrating data, check the current database footprint:
+
+    ```bash
+    # Full table breakdown with static file details
+    reth db stats --detailed-sizes --detailed-segments
+    ```
+  </Accordion>
+
+  <Accordion title="Verify data integrity">
+    Compute checksums before and after any data migration to confirm no corruption:
+
+    ```bash
+    # Checksum an individual table
+    reth db checksum mdbx Headers
+
+    # Full database checksum (slow — traverses all data)
+    reth db stats --checksum
+    ```
+  </Accordion>
+
+  <Accordion title="Inspect specific table entries">
+    Browse the most recent entries in the `Transactions` table as JSON:
+
+    ```bash
+    reth db list Transactions --reverse --len 10 --json
+    ```
+  </Accordion>
+
+  <Accordion title="Check database version compatibility">
+    Confirm the database version matches the binary before starting the node after an upgrade:
+
+    ```bash
+    reth db version
+    ```
+  </Accordion>
+
+  <Accordion title="Trie repair after crash">
+    If the node crashed during a write, verify the trie is intact before restarting:
+
+    ```bash
+    reth db repair-trie
+    ```
+  </Accordion>
+</AccordionGroup>

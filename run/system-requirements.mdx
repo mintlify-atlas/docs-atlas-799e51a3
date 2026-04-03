@@ -1,0 +1,104 @@
+---
+title: "System Requirements"
+description: "Hardware, operating system, and network requirements for running a Reth full node or archive node."
+---
+
+The hardware requirements for running Reth depend on the node configuration and can change over time as the network grows or new features are implemented.
+
+The most important requirement is disk performance. CPU and RAM requirements are relatively flexible by comparison.
+
+## Ethereum mainnet
+
+Requirements as of block number `22700000` (June 2025):
+
+| Resource  | Archive node                           | Full node                              |
+| --------- | -------------------------------------- | -------------------------------------- |
+| Disk      | At least 2.8 TB (TLC NVMe recommended) | At least 1.2 TB (TLC NVMe recommended) |
+| Memory    | 16 GB+                                 | 8 GB+                                  |
+| CPU       | Higher clock speed over core count     | Higher clock speed over core count     |
+| Bandwidth | Stable 24 Mbps+                        | Stable 24 Mbps+                        |
+
+## Base mainnet
+
+Requirements as of block number `31900000` (June 2025):
+
+| Resource  | Archive node                                  | Full node                                     |
+| --------- | --------------------------------------------- | --------------------------------------------- |
+| Disk      | At least 4.1 TB (TLC NVMe recommended)        | At least 2 TB (TLC NVMe recommended)          |
+| Memory    | 128 GB+                                       | 128 GB+                                       |
+| CPU       | 6 cores+, higher clock speed over core count  | 6 cores+, higher clock speed over core count  |
+| Bandwidth | Stable 24 Mbps+                               | Stable 24 Mbps+                               |
+
+<Note>
+**On CPU clock speeds**: The AMD EPYC 4005/4004 series is a cost-effective high-clock speed option with support for up to 192 GB memory.
+
+**On CPU cores for Base**: 5+ cores are needed because the state root task splits work into separate threads. The state root task is generally more performant and can scale with the number of CPU cores. For Base, fewer cores can lead to block processing latencies exceeding 2 seconds and lagging behind the chain tip. This is not a requirement for Ethereum mainnet.
+</Note>
+
+## Disk
+
+The simplest approach is to use a [good TLC NVMe](https://gist.github.com/yorickdowne/f3a3e79a573bf35767cd002cc977b038) drive for all data.
+
+For advanced storage optimization, you can split data across drives:
+
+- **TLC NVMe**: All application data except static files (`--datadir`)
+- **SATA SSD or HDD**: Static files can be stored on slower, cheaper storage (`--datadir.static-files`)
+
+### TLC vs. QLC NVMe
+
+<AccordionGroup>
+  <Accordion title="TLC NVMe (recommended)">
+    TLC (Triple-Level Cell) drives store three bits per cell. They offer faster read and write speeds, higher endurance, and longer lifespans. TLC drives are the recommended choice for running Ethereum nodes under heavy workloads.
+
+    Popular TLC NVMe options: Seagate Firecuda 530, WD Black SN850(X).
+  </Accordion>
+  <Accordion title="QLC NVMe (not recommended for heavy workloads)">
+    QLC (Quad-Level Cell) drives store four bits per cell, providing higher storage density at lower cost. However, they have slower read/write speeds and lower endurance. QLC drives are less suitable for the constant data rewriting involved in running a node.
+  </Accordion>
+</AccordionGroup>
+
+## CPU
+
+Most syncing time is spent executing transactions, which is a single-threaded operation due to potential state dependencies between transactions. As a result, **higher clock speeds matter more than core count** for Ethereum mainnet.
+
+More cores do help with parallelizable stages (like sender recovery or bodies downloading), but these are not the primary bottleneck.
+
+## Memory
+
+A minimum of 16 GB of RAM is recommended. Most Reth components consume relatively little memory unless under heavy RPC load.
+
+Higher memory generally improves caching, which reduces disk I/O and improves overall performance.
+
+## Network
+
+A stable internet connection is required for syncing from genesis and staying at the chain tip.
+
+Due to Reth's staged sync, internet access is only needed during the Headers and Bodies stages — typically the first 1–3 hours of a sync, depending on connection speed. The remaining stages run offline.
+
+Once synced, a reliable connection is important, especially for validators. A **24 Mbps or faster** connection is recommended. Ensure your ISP does not impose bandwidth caps.
+
+## Operating system support
+
+| OS              | Support                          |
+| --------------- | -------------------------------- |
+| Linux           | Fully supported                  |
+| macOS           | Fully supported                  |
+| Windows         | Tracked (not officially released)|
+| Windows WSL2    | Supported (WSL1 is not supported)|
+
+<Warning>
+Reth does **not** work on Windows WSL1. Use WSL2 or run natively on Linux or macOS.
+</Warning>
+
+## Hardware recommendations
+
+### Build your own
+
+- **Storage**: Consult the [Great and less great SSDs for Ethereum nodes](https://gist.github.com/yorickdowne/f3a3e79a573bf35767cd002cc977b038) guide. Popular TLC NVMe options are the Seagate Firecuda 530 and WD Black SN850(X). Ensure proper cooling with heatsinks or active fans.
+- **CPU**: AMD Ryzen 5000/7000/9000, AMD EPYC 4004/4005, or Intel Core i5/i7 (11th gen or newer) with at least 6 cores.
+- **Memory**: 32 GB DDR4 or DDR5 (ECC if your motherboard and CPU support it).
+
+### Hosted providers
+
+- [Latitude.sh](https://www.latitude.sh): `f4.metal.small`, `c3.large.x86` or better
+- [OVH](https://www.ovhcloud.com/en/bare-metal/advance/): `Advance-1` or better

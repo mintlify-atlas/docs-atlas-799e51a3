@@ -1,0 +1,429 @@
+---
+title: "debug Namespace"
+description: "Geth-style debugging API for tracing transactions, inspecting raw blockchain data, and replaying EVM execution."
+---
+
+The `debug` namespace provides methods to inspect Ethereum state and replay EVM execution using Geth-compatible trace formats. It includes both raw data access methods and tracing APIs with configurable tracers.
+
+Enable the `debug` namespace:
+
+```bash
+reth node --http --http.api debug
+```
+
+<Note>
+  Tracing methods can be resource-intensive. For heavily loaded nodes, consider running tracing requests on a separate archive node.
+</Note>
+
+## Raw Data Methods
+
+These methods return low-level, binary-encoded blockchain data.
+
+<AccordionGroup>
+  <Accordion title="debug_getRawHeader">
+    Returns the RLP-encoded block header.
+
+    **Parameters:**
+    - `blockId` — `BlockId`: block number, hash, or tag
+
+    **Returns:** `Bytes` — RLP-encoded header.
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"debug_getRawHeader","params":["latest"],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="debug_getRawBlock">
+    Returns the RLP-encoded full block (header + transactions + uncles).
+
+    **Parameters:**
+    - `blockId` — `BlockId`
+
+    **Returns:** `Bytes` — RLP-encoded block.
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"debug_getRawBlock","params":["latest"],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="debug_getRawTransaction">
+    Returns the EIP-2718 binary-encoded transaction. For EIP-4844 blob transactions in the pool, the blob sidecar is included.
+
+    **Parameters:**
+    - `hash` — `B256`: transaction hash
+
+    **Returns:** `Bytes | null`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"debug_getRawTransaction","params":["0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b"],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="debug_getRawTransactions">
+    Returns an array of EIP-2718 binary-encoded transactions for all transactions in a block.
+
+    **Parameters:**
+    - `blockId` — `BlockId`
+
+    **Returns:** `Array<Bytes>`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"debug_getRawTransactions","params":["latest"],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="debug_getRawReceipts">
+    Returns an array of EIP-2718 binary-encoded receipts for a block.
+
+    **Parameters:**
+    - `blockId` — `BlockId`
+
+    **Returns:** `Array<Bytes>`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"debug_getRawReceipts","params":["latest"],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="debug_getBadBlocks">
+    Returns an array of recent invalid blocks that the client has seen on the network. Useful for diagnosing consensus issues.
+
+    **Parameters:** None
+
+    **Returns:** `Array<object>` — list of bad block objects.
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"debug_getBadBlocks","params":[],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="debug_dbGet">
+    Returns the raw value of a key stored in the database.
+
+    **Parameters:**
+    - `key` — `string`: hex-encoded database key
+
+    **Returns:** `Bytes | null`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"debug_dbGet","params":["0x00"],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="debug_storageRangeAt">
+    Returns the contract storage at a given block height and transaction index. Results can be paged with `maxResult` and `keyStart`.
+
+    **Parameters:**
+    - `blockHash` — `B256`
+    - `txIndex` — `usize`: transaction index within the block
+    - `address` — `Address`: contract address
+    - `keyStart` — `B256`: storage key offset (for paging)
+    - `maxResult` — `u64`: maximum number of storage slots to return
+
+    **Returns:** storage slot map.
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{
+        "jsonrpc":"2.0","method":"debug_storageRangeAt","id":1,
+        "params":["0x7eb25504e4c202cf3d62fd585d3e238f592c780cca82dacb2ed3cb5b38883add",0,"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","0x0000000000000000000000000000000000000000000000000000000000000000",10]
+      }'
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Transaction Tracing
+
+These methods replay transactions and return structured execution traces in Geth format.
+
+### Tracer Options
+
+All tracing methods accept an optional `GethDebugTracingOptions` object:
+
+<ParamField body="tracer" type="string">
+  The tracer to use. Options:
+  - `""` (empty) — default struct logger
+  - `"callTracer"` — traces the call tree
+  - `"prestateTracer"` — returns the pre-execution state of all touched accounts
+  - `"4byteTracer"` — counts calls by 4-byte function selectors
+  - `"muxTracer"` — runs multiple tracers simultaneously
+  - `"flatCallTracer"` — flattened call traces (Parity-compatible output)
+</ParamField>
+
+<ParamField body="tracerConfig" type="object">
+  Tracer-specific configuration. For `callTracer`: `{ "onlyTopCall": true }` to skip sub-calls. For `prestateTracer`: `{ "diffMode": true }` to return only changed state.
+</ParamField>
+
+<ParamField body="timeout" type="string">
+  Overrides the default trace timeout (e.g. `"10s"`, `"30s"`). Default is `5s`.
+</ParamField>
+
+<ParamField body="disableStorage" type="boolean">
+  Disables storage capture in the default struct logger. Reduces output size.
+</ParamField>
+
+<ParamField body="disableStack" type="boolean">
+  Disables stack capture in the default struct logger.
+</ParamField>
+
+<ParamField body="enableMemory" type="boolean">
+  Enables memory capture in the default struct logger (disabled by default for performance).
+</ParamField>
+
+<ParamField body="enableReturnData" type="boolean">
+  Enables return data capture.
+</ParamField>
+
+<AccordionGroup>
+  <Accordion title="debug_traceTransaction">
+    Replays a transaction in the exact same manner as it was executed on the network, returning a full EVM execution trace.
+
+    **Parameters:**
+    - `txHash` — `B256`
+    - `opts` — `GethDebugTracingOptions` (optional)
+
+    **Returns:** `GethTrace`
+
+    <CodeGroup>
+      ```bash Default struct logger
+      curl -s -X POST http://127.0.0.1:8545 \
+        -H "Content-Type: application/json" \
+        -d '{
+          "jsonrpc":"2.0","method":"debug_traceTransaction","id":1,
+          "params":["0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",{}]
+        }'
+      ```
+      ```bash callTracer
+      curl -s -X POST http://127.0.0.1:8545 \
+        -H "Content-Type: application/json" \
+        -d '{
+          "jsonrpc":"2.0","method":"debug_traceTransaction","id":1,
+          "params":["0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",{"tracer":"callTracer"}]
+        }'
+      ```
+      ```bash prestateTracer
+      curl -s -X POST http://127.0.0.1:8545 \
+        -H "Content-Type: application/json" \
+        -d '{
+          "jsonrpc":"2.0","method":"debug_traceTransaction","id":1,
+          "params":["0x88df016429689c079f3b2f6ad39fa052532c56795b733da78a91ebe6a713944b",{"tracer":"prestateTracer","tracerConfig":{"diffMode":true}}]
+        }'
+      ```
+    </CodeGroup>
+
+    Example response (callTracer):
+
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "id": 1,
+      "result": {
+        "type": "CALL",
+        "from": "0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
+        "to": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+        "value": "0xde0b6b3a7640000",
+        "gas": "0x5208",
+        "gasUsed": "0x5208",
+        "input": "0xd0e30db0",
+        "output": "0x",
+        "calls": []
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="debug_traceBlock">
+    Returns a full stack trace of all invoked opcodes for all transactions in a block. This expects an RLP-encoded block.
+
+    <Warning>The parent of this block must be present in the database, or the call will fail.</Warning>
+
+    **Parameters:**
+    - `rlpBlock` — `Bytes`: RLP-encoded block
+    - `opts` — `GethDebugTracingOptions` (optional)
+
+    **Returns:** `Array<TraceResult>`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"debug_traceBlock","params":["0xf90213...",""],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="debug_traceBlockByHash">
+    Replays a block already present in the database, identified by its hash.
+
+    **Parameters:**
+    - `blockHash` — `B256`
+    - `opts` — `GethDebugTracingOptions` (optional)
+
+    **Returns:** `Array<TraceResult>`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{
+        "jsonrpc":"2.0","method":"debug_traceBlockByHash","id":1,
+        "params":["0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3",{"tracer":"callTracer"}]
+      }'
+    ```
+  </Accordion>
+
+  <Accordion title="debug_traceBlockByNumber">
+    Replays a block already present in the database, identified by its number or tag.
+
+    **Parameters:**
+    - `number` — `BlockNumberOrTag`
+    - `opts` — `GethDebugTracingOptions` (optional)
+
+    **Returns:** `Array<TraceResult>`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{
+        "jsonrpc":"2.0","method":"debug_traceBlockByNumber","id":1,
+        "params":["latest",{"tracer":"callTracer"}]
+      }'
+    ```
+  </Accordion>
+
+  <Accordion title="debug_traceChain">
+    Returns structured logs for EVM execution between two block numbers (exclusive of start, inclusive of end).
+
+    **Parameters:**
+    - `startBlock` — `BlockNumberOrTag`: first block (exclusive)
+    - `endBlock` — `BlockNumberOrTag`: last block (inclusive)
+
+    **Returns:** `Array<BlockTraceResult>`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"debug_traceChain","params":["0x3d0900","0x3d0904"],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="debug_traceCall">
+    Runs an `eth_call` within the context of the given block and returns an EVM trace. Useful for simulating and debugging calls without broadcasting.
+
+    **Parameters:**
+    - `request` — transaction request object
+    - `blockId` — `BlockId` (optional)
+    - `opts` — `GethDebugTracingCallOptions` (optional) — same as tracing options plus `stateOverrides` and `blockOverrides`
+
+    **Returns:** `GethTrace`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{
+        "jsonrpc":"2.0","method":"debug_traceCall","id":1,
+        "params":[
+          {"from":"0xd8da6bf26964af9d7eed9e03e53415d37aa96045","to":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","data":"0x18160ddd"},
+          "latest",
+          {"tracer":"callTracer"}
+        ]
+      }'
+    ```
+  </Accordion>
+
+  <Accordion title="debug_traceCallMany">
+    Runs multiple `eth_call`s within the context of the given block. Each bundle can override block headers. Transaction `n` is executed on top of all `n-1` preceding transactions.
+
+    **Parameters:**
+    - `bundles` — `Array<Bundle>` — list of bundles, each with a list of transaction requests
+    - `stateContext` — `StateContext` (optional)
+    - `opts` — `GethDebugTracingCallOptions` (optional)
+
+    **Returns:** `Array<Array<GethTrace>>` — outer array is bundles, inner array is transactions per bundle.
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{
+        "jsonrpc":"2.0","method":"debug_traceCallMany","id":1,
+        "params":[
+          [{"transactions":[{"from":"0xd8da6bf26964af9d7eed9e03e53415d37aa96045","to":"0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2","data":"0xd0e30db0","value":"0xde0b6b3a7640000"}]}],
+          null,
+          {"tracer":"callTracer"}
+        ]
+      }'
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Execution Witness
+
+<AccordionGroup>
+  <Accordion title="debug_executionWitness">
+    Re-executes a block and returns an execution witness — a map of all hashed trie nodes to their preimages that were accessed during execution, including during state root recomputation. Used for stateless client verification.
+
+    **Parameters:**
+    - `block` — `BlockNumberOrTag`
+
+    **Returns:** `ExecutionWitness`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"debug_executionWitness","params":["latest"],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="debug_executionWitnessByBlockHash">
+    Same as `debug_executionWitness` but accepts a block hash instead of a number or tag.
+
+    **Parameters:**
+    - `hash` — `B256`
+
+    **Returns:** `ExecutionWitness`
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"debug_executionWitnessByBlockHash","params":["0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3"],"id":1}'
+    ```
+  </Accordion>
+
+  <Accordion title="debug_getBlockAccessList">
+    Re-executes a block and returns the Block Access List (BAL) as defined in EIP-7928.
+
+    **Parameters:**
+    - `blockId` — `BlockId`
+
+    **Returns:** `BlockAccessList`
+  </Accordion>
+</AccordionGroup>
+
+## Other debug_ Methods
+
+The following additional methods are available. Many are primarily used for node diagnostics and developer tooling:
+
+| Method                              | Description                                               |
+| ----------------------------------- | --------------------------------------------------------- |
+| `debug_chainConfig`                 | Returns the current chain configuration                   |
+| `debug_codeByHash`                  | Returns the bytecode associated with a given code hash    |
+| `debug_getModifiedAccountsByHash`   | Returns accounts that changed between two block hashes    |
+| `debug_getModifiedAccountsByNumber` | Returns accounts that changed between two block numbers   |
+| `debug_intermediateRoots`           | Returns intermediate state roots after each transaction   |
+| `debug_traceBadBlock`               | Traces a block that was rejected as invalid               |
+| `debug_setHead`                     | Sets the current chain head to a specific block number    |
+| `debug_accountRange`                | Enumerates all accounts at a block height with paging     |
+| `debug_dumpBlock`                   | Returns a dump of all account state at a block height     |
+| `debug_stateRootWithUpdates`        | Returns the state root for a given hashed post-state      |

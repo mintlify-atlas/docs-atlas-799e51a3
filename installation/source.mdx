@@ -1,0 +1,197 @@
+---
+title: "Build from Source"
+description: "Compile Reth from source using Rust and Cargo on Linux, macOS, or Windows."
+---
+
+You can build Reth on Linux, macOS, Windows, and Windows WSL2.
+
+<Warning>
+Reth does **not** work on Windows WSL1. Use WSL2, or build on Linux or macOS instead.
+</Warning>
+
+## Prerequisites
+
+### Install Rust
+
+Install Rust using [rustup](https://rustup.rs/):
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+When prompted, enter `1` to accept the default installation.
+
+<Tip>
+After installation, run `cargo version` to confirm the toolchain is available. If the command is not found, run `source $HOME/.cargo/env` first. Consider appending that line to your `~/.bashrc` or `~/.zshrc`.
+</Tip>
+
+The Minimum Supported Rust Version (MSRV) for Reth is **1.88.0**. Check your installed version with `rustc --version` and update it with `rustup update`.
+
+### Install system dependencies
+
+Install the packages required to build Reth's database bindings:
+
+<Tabs>
+  <Tab title="Ubuntu / Debian">
+    ```bash
+    apt-get install libclang-dev pkg-config build-essential
+    ```
+  </Tab>
+  <Tab title="macOS">
+    ```bash
+    brew install llvm pkg-config
+    ```
+  </Tab>
+  <Tab title="Windows">
+    ```powershell
+    choco install llvm
+    # or
+    winget install LLVM.LLVM
+    ```
+  </Tab>
+</Tabs>
+
+## Build Reth
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/paradigmxyz/reth
+    cd reth
+    ```
+  </Step>
+  <Step title="Install the binary">
+    Install Reth directly into your `PATH` via Cargo:
+
+    ```bash
+    cargo install --locked --path bin/reth --bin reth
+    ```
+
+    The `reth` binary will be placed in `~/.cargo/bin/` and available as `reth` on the command line.
+
+    Alternatively, build without installing:
+
+    ```bash
+    cargo build --release
+    ```
+
+    The binary will be at `./target/release/reth`. Copy it to a directory of your choice.
+  </Step>
+  <Step title="Verify the build">
+    Compilation takes around 10 minutes. Confirm it succeeded by running:
+
+    ```bash
+    reth --help
+    ```
+
+    This should display the [command-line documentation](/cli/overview).
+  </Step>
+</Steps>
+
+## Update Reth
+
+To update Reth to a specific version, fetch the latest tags, check out the target version, and rebuild:
+
+```bash
+cd reth
+git fetch
+git checkout v1.0.0   # replace with the version you want
+cargo build --release
+```
+
+## Performance optimizations
+
+### Compiler profiles
+
+Reth ships several Cargo profiles selectable with the `--profile` flag:
+
+| Profile   | Description                                                              |
+| --------- | ------------------------------------------------------------------------ |
+| `release` | Default for source builds. Enables most optimizations without long compile times. |
+| `maxperf` | Default for binary releases. Enables aggressive optimizations including full LTO. Improves some benchmarks by ~20% but significantly increases compile time. |
+
+### CPU-specific optimizations
+
+Use `RUSTFLAGS="-C target-cpu=native"` to enable optimizations for your specific CPU:
+
+```bash
+RUSTFLAGS="-C target-cpu=native" cargo build --profile maxperf
+```
+
+### Enabled features
+
+The following performance features are enabled by default: `jemalloc` (except on Windows), `asm-keccak`, and `min-debug-logs`.
+
+Optional log level features disable compilation of lower-level logs to reduce overhead:
+
+```bash
+# Build with only error-level logs compiled in
+cargo build --release --features min-error-logs
+```
+
+## Running tests
+
+To run the full test suite:
+
+```bash
+cargo nextest run --workspace
+```
+
+<Tip>
+[`cargo nextest`](https://nexte.st/) is strongly recommended over `cargo test` for faster execution and better output.
+</Tip>
+
+To run the Ethereum Foundation test vectors:
+
+```bash
+make ef-tests
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Command not found after install">
+    Reth is installed to `$CARGO_HOME` or `$HOME/.cargo/bin`. This directory must be on your `PATH`.
+
+    Add the following to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.):
+
+    ```bash
+    export PATH="$HOME/.cargo/bin:$PATH"
+    ```
+
+    See the [Rust installation docs](https://www.rust-lang.org/tools/install) for more information.
+  </Accordion>
+  <Accordion title="Compilation error">
+    Make sure you are running the latest stable version of Rust:
+
+    ```bash
+    rustup update
+    ```
+
+    If you cannot install the latest version, check the `rust-version` field in [Cargo.toml](https://github.com/paradigmxyz/reth/blob/main/Cargo.toml) for the MSRV and compile against that version instead.
+  </Accordion>
+  <Accordion title="SIGKILL during compilation (out of memory)">
+    If compilation fails with `(signal: 9, SIGKILL: kill)`, your machine likely ran out of memory during compilation.
+
+    - If running in Docker, increase the container memory limit.
+    - Alternatively, use a [pre-built binary](/installation/overview) instead of compiling from source.
+  </Accordion>
+  <Accordion title="keccak-asm or sha3-asm build failure">
+    If compilation fails in the `keccak-asm` or `sha3-asm` crates, your platform may not be supported. See the [`keccak-asm` target table](https://github.com/DaniPopes/keccak-asm?tab=readme-ov-file#support) for the list of supported targets.
+  </Accordion>
+  <Accordion title="Linker error: 'linking with cc failed'">
+    Run `cargo clean` and try building again:
+
+    ```bash
+    cargo clean
+    cargo build --release
+    ```
+  </Accordion>
+  <Accordion title="Bus error on WSL2">
+    The default WSL2 virtual disk size is 1 TB, which may not be sufficient for syncing Reth. You must expand the allocated disk size for your WSL2 instance before syncing.
+
+    Follow Microsoft's guide: [How to expand the size of your WSL 2 virtual hard disk](https://learn.microsoft.com/en-us/windows/wsl/disk-space#how-to-expand-the-size-of-your-wsl-2-virtual-hard-disk).
+  </Accordion>
+</AccordionGroup>
+
+If you run into issues not listed here, ask for help on [Telegram](https://t.me/paradigm_reth).

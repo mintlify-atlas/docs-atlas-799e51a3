@@ -1,0 +1,162 @@
+---
+title: "Docker"
+description: "Run Reth using Docker or Docker Compose, with the official image from GitHub Container Registry or built locally from source."
+---
+
+Docker is the quickest way to get Reth running with a full monitoring stack. You can use the official image from GitHub Container Registry or build one locally.
+
+<Note>
+Reth requires Docker Engine version **20.10.10 or higher** due to [missing support](https://docs.docker.com/engine/release-notes/20.10/#201010) for the `clone3` syscall in earlier versions.
+</Note>
+
+## Obtain the Docker image
+
+<Tabs>
+  <Tab title="GitHub Container Registry">
+    Reth publishes Docker images for both x86_64 and ARM64 on every release.
+
+    Pull the latest image:
+
+    ```bash
+    docker pull ghcr.io/paradigmxyz/reth
+    ```
+
+    Pull a specific version:
+
+    ```bash
+    docker pull ghcr.io/paradigmxyz/reth:v1.0.0
+    ```
+
+    Verify the image works:
+
+    ```bash
+    docker run --rm ghcr.io/paradigmxyz/reth --version
+    ```
+
+    If you see the version number printed, the image is working correctly.
+  </Tab>
+  <Tab title="Build from source">
+    To build the Docker image yourself, navigate to the root of the Reth repository and run:
+
+    ```bash
+    docker build . -t reth:local
+    ```
+
+    The build will take several minutes. Once complete, verify it with:
+
+    ```bash
+    docker run --rm reth:local --version
+    ```
+  </Tab>
+</Tabs>
+
+## Run Reth with Docker
+
+<Tabs>
+  <Tab title="Plain Docker">
+    Run Reth with a named volume for data persistence and ports exposed for peering and metrics:
+
+    ```bash
+    docker run \
+        -v rethdata:/root/.local/share/reth/mainnet \
+        -d \
+        -p 9001:9001 \
+        -p 30303:30303 \
+        -p 30303:30303/udp \
+        --name reth \
+        ghcr.io/paradigmxyz/reth \
+        node \
+        --metrics 0.0.0.0:9001
+    ```
+
+    This command:
+
+    - Creates a named volume `rethdata` for persistent chain data
+    - Exposes port `30303` (TCP and UDP) for peer-to-peer networking
+    - Exposes port `9001` for Prometheus metrics
+    - Runs the container in detached mode (`-d`) with the name `reth`
+
+    <Tip>
+    Replace `ghcr.io/paradigmxyz/reth` with `reth:local` if you built the image locally.
+    </Tip>
+  </Tab>
+  <Tab title="Docker Compose">
+    Docker Compose sets up a full stack — Reth, Lighthouse (consensus client), Prometheus, and Grafana — with a single command.
+
+    From the root of the Reth repository, first generate the JWT secret:
+
+    ```bash
+    ./etc/generate-jwt.sh
+    ```
+
+    Then start the stack:
+
+    ```bash
+    docker compose -f etc/docker-compose.yml -f etc/lighthouse.yml up -d
+    ```
+
+    Check the logs to confirm Reth is running:
+
+    ```bash
+    docker compose -f etc/docker-compose.yml -f etc/lighthouse.yml logs -f reth
+    ```
+
+    **What gets started:**
+
+    The base `docker-compose.yml` starts three containers:
+    - Reth (execution client)
+    - Prometheus (metrics collection)
+    - Grafana (metrics visualization)
+
+    The optional `lighthouse.yml` adds:
+    - Lighthouse (consensus client)
+    - [`ethereum-metrics-exporter`](https://github.com/ethpandaops/ethereum-metrics-exporter)
+
+    Grafana is available at [http://localhost:3000](http://localhost:3000) with default credentials (`admin` / `admin`). Two dashboards are pre-configured:
+    - **reth**: Reth node metrics
+    - **Ethereum Metrics Exporter**: Combined metrics (requires Lighthouse)
+
+    <Note>
+    If you want to use a different consensus client instead of Lighthouse:
+    - The JWT secret is at `etc/jwttoken/jwt.hex` after running `generate-jwt.sh`
+    - The Reth Engine API is accessible at `localhost:8551`
+    </Note>
+  </Tab>
+</Tabs>
+
+## Interact with Reth inside Docker
+
+To open a shell inside a running Reth container:
+
+```bash
+docker exec -it reth bash
+```
+
+<Note>
+If Reth is running with Docker Compose, use `reth-reth-1` as the container name instead of `reth`.
+</Note>
+
+Once inside the container, you can use all standard [reth CLI commands](/cli/overview).
+
+## Run only Grafana
+
+To import existing Grafana dashboards without running Reth inside Docker:
+
+```bash
+docker compose -f etc/docker-compose.yml up -d --no-deps grafana
+```
+
+After logging in with `admin:admin`, update the Prometheus data source URL to point to your locally running Prometheus instance:
+
+- **Mac or Windows**: `http://host.docker.internal:9090`
+- **Linux**: `http://172.17.0.1:9090`
+
+## Port reference
+
+| Port  | Protocol | Purpose                       |
+| ----- | -------- | ----------------------------- |
+| 30303 | TCP/UDP  | P2P peer discovery and sync   |
+| 8545  | TCP      | HTTP JSON-RPC                 |
+| 8546  | TCP      | WebSocket JSON-RPC            |
+| 8551  | TCP      | Engine API (consensus client) |
+| 9001  | TCP      | Prometheus metrics            |

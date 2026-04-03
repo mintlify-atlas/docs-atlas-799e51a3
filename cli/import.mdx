@@ -1,0 +1,128 @@
+---
+title: "reth import"
+description: "Import blocks from RLP or ERA encoded files into the Reth database, replacing the network-based header and body download stages."
+---
+
+The `reth import` command syncs blocks from local RLP encoded files into the Reth database. It replaces the online header and body download stages with a file-based import, then runs the remaining sync stages (sender recovery, execution, hashing, etc.) against the imported data.
+
+```bash
+reth import --help
+```
+
+## Usage
+
+```bash
+reth import [OPTIONS] <IMPORT_PATH>...
+```
+
+You must provide at least one path to a block file. Multiple files are imported sequentially in the order given.
+
+## Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `<IMPORT_PATH>...` | required | One or more paths to RLP block files |
+| `--chain <CHAIN_OR_PATH>` | `mainnet` | Chain name or path to chain spec JSON. Built-in: `mainnet`, `sepolia`, `holesky`, `hoodi`, `dev` |
+| `--datadir <DATA_DIR>` | OS data dir | Root Reth data directory |
+| `--config <FILE>` | — | Path to TOML configuration file |
+| `--no-state` | — | Disable stages that require state (execution, hashing, etc.). Import headers and bodies only |
+| `--chunk-len <BYTES>` | — | Chunk byte length to read from file at a time |
+| `--fail-on-invalid-block` | — | Exit immediately with an error when an invalid block is encountered. Without this flag, the import stops at the last valid block and leaves the database in a valid state |
+
+## Examples
+
+<Steps>
+  <Step title="Initialize the database">
+    Before importing, initialize Reth for the target chain. The database must exist before importing blocks.
+
+    ```bash
+    reth init --chain mainnet
+    ```
+  </Step>
+  <Step title="Import a block file">
+    Import blocks from a single RLP file:
+
+    ```bash
+    reth import /path/to/chain.rlp
+    ```
+
+    Reth processes headers and bodies from the file, then runs execution, hashing, and other stages automatically.
+  </Step>
+  <Step title="Import multiple files">
+    Import from several files sequentially. Files are processed in the order given:
+
+    ```bash
+    reth import \
+      /path/to/chain-part1.rlp \
+      /path/to/chain-part2.rlp \
+      /path/to/chain-part3.rlp
+    ```
+  </Step>
+  <Step title="Import to a non-default datadir">
+    Write to a specific data directory:
+
+    ```bash
+    reth import \
+      --datadir /mnt/fast-drive/reth-data \
+      --chain mainnet \
+      /path/to/chain.rlp
+    ```
+  </Step>
+</Steps>
+
+## Import without state execution
+
+Use `--no-state` to import only headers and bodies, skipping execution and state-dependent stages. This is faster and useful for pre-staging block data before running execution separately.
+
+```bash
+reth import --no-state /path/to/chain.rlp
+```
+
+<Note>
+  After a `--no-state` import, the database contains block headers and bodies but no account or storage state. You cannot serve full RPC responses until the remaining stages complete.
+</Note>
+
+## ERA format
+
+Reth also supports importing blocks from ERA1 files (the standard long-term archive format for Ethereum history). ERA files pack block data more efficiently and are the recommended format for importing large portions of chain history.
+
+Use `reth import-era` for ERA format:
+
+```bash
+reth import-era --help
+reth import-era /path/to/era-directory
+```
+
+## Error handling
+
+By default, if an invalid block is encountered, `reth import` stops at the last valid block and leaves the database consistent. The import reports how many blocks were decoded and imported.
+
+To treat any invalid block as a fatal error instead:
+
+```bash
+reth import --fail-on-invalid-block /path/to/chain.rlp
+```
+
+<Warning>
+  Do not run `reth import` on a database that is currently in use by a running `reth node` process. Both processes would attempt to write to the same MDBX database, causing corruption.
+</Warning>
+
+## Obtaining block files
+
+Block files in the RLP format used by `reth import` can be exported from other Ethereum clients:
+
+- **Geth**: Use the `geth export` subcommand
+- **Era1 archives**: Available from community-hosted ERA1 archives for Ethereum mainnet and testnets
+
+## Database and logging options
+
+All standard Reth database and logging flags are available. See the [CLI overview](/cli/overview) for the full list. Common ones for import:
+
+```bash
+reth import \
+  --chain mainnet \
+  --datadir /data/reth \
+  --db.max-size 4TB \
+  --log.stdout.filter info \
+  /path/to/chain.rlp
+```

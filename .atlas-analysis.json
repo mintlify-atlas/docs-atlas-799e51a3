@@ -1,28 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "Reth",
+  "projectType": "sdk-library",
+  "projectName": "Reth",
+  "projectDescription": "A modular, blazing-fast Ethereum execution client written in Rust that serves both as a production-ready full node and a library of composable crates for building custom blockchain infrastructure.",
   "theme": "aspen",
-  "colors": {
-    "primary": "#ca9978",
-    "light": "#848484",
-    "dark": "#121212"
-  },
-  "favicon": "https://media.brand.dev/8c82cbde-5984-4ad1-9b7e-a9b7dbf02eeb.png",
-  "logo": {
-    "light": "https://media.brand.dev/b7999f66-0e63-4a2a-8b23-156fa1ee78c3.png",
-    "dark": "https://media.brand.dev/b7999f66-0e63-4a2a-8b23-156fa1ee78c3.png"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/paradigmxyz/reth"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/paradigmxyz/reth"
-    }
-  },
+  "primaryColor": "#ca9978",
+  "lightColor": "#848484",
+  "darkColor": "#121212",
   "navigation": {
     "tabs": [
       {
@@ -120,5 +103,31 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "Blazing-fast Ethereum full node (mainnet, testnets, private networks)",
+    "Modular crate architecture — use individual components as libraries",
+    "Staged-sync pipeline for efficient initial block synchronization",
+    "Execution Extensions (ExEx) for building indexers, bridges, and rollups in-process",
+    "Comprehensive JSON-RPC server (eth_, debug_, trace_, admin_, txpool_, net_, web3_)",
+    "High-performance MDBX + static-file hybrid storage",
+    "Node Builder API for constructing fully custom Ethereum nodes",
+    "Pluggable EVM and consensus — supports chain customization",
+    "Parallel Merkle Patricia Trie with fast state root computation",
+    "Production-ready with Sigma Prime security audit"
+  ],
+  "publicApiSurface": [
+    "reth node — start an Ethereum full/archive node",
+    "reth db — inspect and manage the local database",
+    "reth import — import blocks from RLP-encoded files",
+    "reth debug — debugging utilities (replay, merkle, in-memory-merkle)",
+    "NodeBuilder::new() — programmatic node construction API",
+    "ExEx install_exex() — register an Execution Extension",
+    "eth_ JSON-RPC namespace (getBalance, sendRawTransaction, getLogs, ...)",
+    "debug_ JSON-RPC namespace (traceTransaction, traceBlock, ...)",
+    "trace_ JSON-RPC namespace (OpenEthereum-style tracing)",
+    "reth-ethereum crate — Ethereum meta-crate for library consumers",
+    "reth-exex crate — Execution Extension framework",
+    "reth-node-api crate — node builder traits and interfaces"
+  ]
 }

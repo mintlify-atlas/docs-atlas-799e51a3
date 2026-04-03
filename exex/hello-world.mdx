@@ -1,0 +1,183 @@
+---
+title: "Hello World ExEx"
+description: "Build a minimal Execution Extension that logs block information as new chains are committed, reverted, and reorganized."
+---
+
+This guide walks through building a simple "Hello World" ExEx that emits a log every time a new chain of blocks is committed, reverted, or reorged.
+
+## Create a project
+
+<Steps>
+  <Step title="Scaffold a new binary crate">
+    ```bash
+    cargo new --bin my-exex
+    cd my-exex
+    ```
+  </Step>
+
+  <Step title="Add Reth dependencies to Cargo.toml">
+    ```toml Cargo.toml
+    [package]
+    name = "my-exex"
+    version = "0.1.0"
+    edition = "2024"
+
+    [dependencies]
+    reth = { git = "https://github.com/paradigmxyz/reth.git" } # Reth
+    reth-exex = { git = "https://github.com/paradigmxyz/reth.git" } # Execution Extensions
+    reth-node-ethereum = { git = "https://github.com/paradigmxyz/reth.git" } # Ethereum Node implementation
+    reth-tracing = { git = "https://github.com/paradigmxyz/reth.git" } # Logging
+
+    eyre = "0.6" # Easy error handling
+    futures-util = "0.3" # Stream utilities for consuming notifications
+    ```
+  </Step>
+
+  <Step title="Initialize a default Reth node">
+    Open `src/main.rs` and start by initializing and launching a default Reth node:
+
+    ```rust src/main.rs
+    use reth_node_ethereum::EthereumNode;
+
+    fn main() -> eyre::Result<()> {
+        reth::cli::Cli::parse_args().run(async move |builder, _| {
+            let handle = builder.node(EthereumNode::default()).launch_with_debug_capabilities().await?;
+
+            handle.wait_for_node_exit().await
+        })
+    }
+    ```
+
+    You can test this immediately. The following command initializes a Holesky node in a custom datadir (to avoid interfering with existing Reth instances):
+
+    ```bash
+    cargo run -- init --chain holesky --datadir data
+    ```
+
+    Expected output:
+
+    ```
+    2024-06-12T16:48:06.420296Z  INFO reth init starting
+    2024-06-12T16:48:06.422380Z  INFO Opening storage db_path="data/db" sf_path="data/static_files"
+    2024-06-12T16:48:06.432939Z  INFO Verifying storage consistency.
+    2024-06-12T16:48:06.577673Z  INFO Genesis block written hash=0xb5f7f912443c940f21fd611f12828d75b534364ed9e95ca4e307729a4661bde4
+    ```
+  </Step>
+
+  <Step title="Write the simplest possible ExEx">
+    The simplest ExEx is an async function that never returns. Install it into the node using `install_exex`:
+
+    ```rust src/main.rs
+    use reth::api::FullNodeComponents;
+    use reth_exex::ExExContext;
+    use reth_node_ethereum::EthereumNode;
+
+    async fn my_exex<Node: FullNodeComponents>(mut _ctx: ExExContext<Node>) -> eyre::Result<()> {
+        #[expect(clippy::empty_loop)]
+        loop {}
+    }
+
+    fn main() -> eyre::Result<()> {
+        reth::cli::Cli::parse_args().run(async move |builder, _| {
+            let handle = builder
+                .node(EthereumNode::default())
+                .install_exex("my-exex", async move |ctx| Ok(my_exex(ctx)))
+                .launch_with_debug_capabilities()
+                .await?;
+
+            handle.wait_for_node_exit().await
+        })
+    }
+    ```
+
+    The unused `_ctx` is the `ExExContext` that provides the notification stream and the event channel. For now it's ignored.
+
+    <Warning>
+    The future returned by the ExEx must never resolve. If your ExEx exits, the node will exit too.
+    </Warning>
+  </Step>
+
+  <Step title="Listen to notifications and send events">
+    Extend the ExEx to receive notifications, log them, and emit `FinishedHeight` back to the node:
+
+    ```rust src/main.rs
+    use futures_util::TryStreamExt;
+    use reth::{api::FullNodeComponents, builder::NodeTypes, primitives::EthPrimitives};
+    use reth_exex::{ExExContext, ExExEvent, ExExNotification};
+    use reth_node_ethereum::EthereumNode;
+    use reth_tracing::tracing::info;
+
+    async fn my_exex<Node: FullNodeComponents<Types: NodeTypes<Primitives = EthPrimitives>>>(
+        mut ctx: ExExContext<Node>,
+    ) -> eyre::Result<()> {
+        while let Some(notification) = ctx.notifications.try_next().await? {
+            match &notification {
+                ExExNotification::ChainCommitted { new } => {
+                    info!(committed_chain = ?new.range(), "Received commit");
+                }
+                ExExNotification::ChainReorged { old, new } => {
+                    info!(from_chain = ?old.range(), to_chain = ?new.range(), "Received reorg");
+                }
+                ExExNotification::ChainReverted { old } => {
+                    info!(reverted_chain = ?old.range(), "Received revert");
+                }
+            };
+
+            if let Some(committed_chain) = notification.committed_chain() {
+                ctx.events.send(ExExEvent::FinishedHeight(committed_chain.tip().num_hash()))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn main() -> eyre::Result<()> {
+        reth::cli::Cli::parse_args().run(async move |builder, _| {
+            let handle = builder
+                .node(EthereumNode::default())
+                .install_exex("my-exex", async move |ctx| Ok(my_exex(ctx)))
+                .launch_with_debug_capabilities()
+                .await?;
+
+            handle.wait_for_node_exit().await
+        })
+    }
+    ```
+
+    What changed:
+
+    - `ctx.notifications.try_next().await?` — awaits the next notification from the node. The node is responsible for sending these; the ExEx waits for them.
+    - The `match` block distinguishes between commits, reorgs, and reverts, logging the block range in each case.
+    - After processing, if the notification contains a committed chain, `ExExEvent::FinishedHeight` is sent back to the node via `ctx.events.send(...)`.
+
+    <Warning>
+    Sending `ExExEvent::FinishedHeight` is critical. It is the only way to tell the node that the ExEx has finished processing a given height and that the associated data is safe to prune. If you never emit it, Reth will never prune historical state on a pruned node.
+    </Warning>
+  </Step>
+
+  <Step title="Run the node">
+    Start syncing Holesky with your ExEx installed:
+
+    ```bash
+    cargo run -- node --chain holesky --datadir data
+    ```
+
+    As blocks are committed you will see log lines like:
+
+    ```
+    INFO my_exex: Received commit committed_chain=1234..1235
+    ```
+  </Step>
+</Steps>
+
+## What you built
+
+This is the [minimal ExEx example](https://github.com/paradigmxyz/reth-exex-examples/blob/main/minimal/src/main.rs) from the `reth-exex-examples` repository. It demonstrates the full communication contract between an ExEx and the node:
+
+1. Receive `ExExNotification` from `ctx.notifications`
+2. Process the notification
+3. Emit `ExExEvent::FinishedHeight` for any committed chain tip
+
+## Next steps
+
+Now that you have a working ExEx, see how to [keep track of state](/exex/tracking-state) across blocks, including handling reorgs correctly.

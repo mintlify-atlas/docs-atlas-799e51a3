@@ -1,97 +1,99 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Reth — Modular Ethereum Execution Client"
+description: "A blazing-fast, modular Ethereum execution client written in Rust. Run a production node or use individual crates to build custom blockchain infrastructure."
 ---
 
-## Setting up
+Reth is a production-ready Ethereum full node and SDK written in Rust. Built by [Paradigm](https://paradigm.xyz), it powers staking, RPC providers, MEV infrastructure, indexers, and custom L2 chains — all from a single, permissively-licensed codebase.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Install Reth" icon="download" href="/installation/overview">
+    Get a binary, use Docker, or build from source in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Run a node" icon="server" href="/run/overview">
+    Connect to Ethereum mainnet, testnets, or a private devnet.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Developer SDK" icon="cube" href="/sdk/overview">
+    Use Reth crates as a library to build custom Ethereum nodes.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="JSON-RPC API" icon="code" href="/jsonrpc/intro">
+    Query your node over eth_, debug_, trace_, and more.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## What is Reth?
 
-Everything you need to create world-class documentation.
+Reth is an **Ethereum Execution Layer (EL)** implementation compatible with all consensus clients that support the [Engine API](https://github.com/ethereum/execution-apis/tree/main/src/engine). It is suitable for mission-critical deployments including staking, high-uptime RPC services, MEV extraction, on-chain indexing, and custom EVM chains.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+<CardGroup cols={3}>
+  <Card title="Blazing fast" icon="bolt">
+    Staged-sync architecture with parallel state root computation and MDBX storage.
   </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
+  <Card title="Fully modular" icon="puzzle-piece">
+    Every component is a standalone crate — use only what you need.
   </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
+  <Card title="Production ready" icon="shield-check">
+    Audited by Sigma Prime. Running on Ethereum mainnet since 2024.
   </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+</CardGroup>
 
-## Need inspiration?
+## Quick start
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<Steps>
+  <Step title="Install Reth">
+    Download a pre-built binary for your platform:
+    ```bash
+    # Linux / macOS — download from GitHub Releases
+    curl -L https://github.com/paradigmxyz/reth/releases/latest/download/reth-$(uname -s)-$(uname -m).tar.gz | tar xz
+    ```
+    Or use Docker: `docker pull ghcr.io/paradigmxyz/reth`
+  </Step>
+  <Step title="Start a node">
+    Run Reth against Ethereum mainnet alongside any consensus client:
+    ```bash
+    reth node \
+      --authrpc.jwtsecret /path/to/jwt.hex \
+      --authrpc.addr 127.0.0.1 \
+      --authrpc.port 8551
+    ```
+  </Step>
+  <Step title="Query the RPC">
+    Once synced, query your node via JSON-RPC:
+    ```bash
+    cast block-number --rpc-url http://localhost:8545
+    ```
+  </Step>
+</Steps>
+
+## Use Reth as a library
+
+Add the Ethereum meta-crate to your `Cargo.toml` and build custom nodes with the Node Builder API:
+
+```toml Cargo.toml
+[dependencies]
+reth-ethereum = { git = "https://github.com/paradigmxyz/reth" }
+```
+
+```rust main.rs
+use reth_ethereum::node::{EthereumNode, NodeBuilder};
+
+let handle = NodeBuilder::new(config)
+    .with_types::<EthereumNode>()
+    .with_components(EthereumNode::components())
+    .launch()
+    .await?;
+```
+
+<CardGroup cols={2}>
+  <Card title="Node Builder API" icon="wrench" href="/sdk/overview">
+    Construct and launch fully custom Ethereum nodes.
+  </Card>
+  <Card title="Execution Extensions" icon="plug" href="/exex/overview">
+    Build indexers, bridges, and rollups that run inside the node process.
+  </Card>
+  <Card title="Node Components" icon="microchip" href="/sdk/node-components">
+    Swap out networking, EVM, consensus, RPC, and transaction pool.
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Full reference for all reth commands and flags.
+  </Card>
+</CardGroup>

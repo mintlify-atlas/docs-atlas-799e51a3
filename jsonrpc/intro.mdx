@@ -1,0 +1,219 @@
+---
+title: "JSON-RPC Introduction"
+description: "Overview of Reth's JSON-RPC API, available transports, namespaces, and how to connect."
+---
+
+Reth supports all standard Ethereum JSON-RPC API methods. The API is grouped into namespaces, and each namespace must be explicitly enabled before use.
+
+<Note>
+  It is generally advisable not to expose any JSON-RPC namespace publicly unless you know what you are doing. Some namespaces can configure your node or access sensitive account data.
+</Note>
+
+## Namespaces
+
+<CardGroup cols={2}>
+  <Card title="eth" icon="ethereum" href="/jsonrpc/eth">
+    Interact with Ethereum: accounts, blocks, transactions, logs, and state queries.
+  </Card>
+  <Card title="debug" icon="bug" href="/jsonrpc/debug">
+    Inspect Ethereum state and replay transactions with Geth-style traces.
+  </Card>
+  <Card title="trace" icon="chart-line" href="/jsonrpc/trace">
+    OpenEthereum-style tracing for deep insight into transaction execution.
+  </Card>
+  <Card title="txpool" icon="layer-group" href="/jsonrpc/txpool">
+    Inspect the transaction pool: pending and queued transactions.
+  </Card>
+  <Card title="net" icon="network-wired" href="/jsonrpc/net">
+    Network information: peer count, version, and connection status.
+  </Card>
+  <Card title="web3" icon="globe" href="/jsonrpc/web3">
+    Utility functions: client version and Keccak-256 hashing.
+  </Card>
+  <Card title="admin" icon="gear" href="/jsonrpc/admin">
+    Configure your node at runtime: add/remove peers and inspect node info.
+  </Card>
+</CardGroup>
+
+The full list of supported namespaces:
+
+| Namespace   | Description                                                                                          | Sensitive |
+| ----------- | ---------------------------------------------------------------------------------------------------- | --------- |
+| `eth`       | Interact with Ethereum: accounts, blocks, transactions, state.                                       | Maybe     |
+| `web3`      | Utility functions for the web3 client.                                                               | No        |
+| `net`       | Network information of the node.                                                                     | No        |
+| `txpool`    | Inspect the transaction pool.                                                                        | No        |
+| `debug`     | Inspect Ethereum state including Geth-style traces.                                                  | No        |
+| `trace`     | Inspect Ethereum state including Parity-style traces.                                                | No        |
+| `admin`     | Configure your node at runtime.                                                                      | **Yes**   |
+| `rpc`       | Information about the RPC server and its modules.                                                    | No        |
+| `reth`      | Reth-specific methods: balance changes and chain notifications.                                      | No        |
+| `ots`       | Otterscan-compatible methods for block exploration.                                                  | No        |
+| `flashbots` | Block submission validation methods for builders.                                                    | No        |
+| `miner`     | Configure miner/builder settings like extra data and gas limits.                                     | **Yes**   |
+| `mev`       | MEV bundle submission and simulation.                                                                | No        |
+| `testing`   | Build blocks in a single call (testing only).                                                        | **Yes**   |
+
+## Transports
+
+Reth supports three transport protocols. Transports must be enabled through command-line flags.
+
+<Tabs>
+  <Tab title="HTTP">
+    HTTP is a unidirectional, request-response transport. Subscriptions are not supported over HTTP.
+
+    Enable the HTTP server:
+
+    ```bash
+    reth node --http
+    ```
+
+    The default port is `8545` and the default listen address is `127.0.0.1`.
+
+    Configure address and port:
+
+    ```bash
+    reth node --http --http.addr 127.0.0.1 --http.port 8545
+    ```
+
+    Enable specific namespaces with `--http.api`:
+
+    ```bash
+    reth node --http --http.api eth,net,web3
+    ```
+
+    Enable all namespaces:
+
+    ```bash
+    reth node --http --http.api all
+    ```
+
+    Restrict cross-origin access:
+
+    ```bash
+    # Allow a specific domain
+    reth node --http --http.corsdomain https://mycoolapp.rs
+
+    # Allow all origins (use with caution)
+    reth node --http --http.corsdomain "*"
+    ```
+  </Tab>
+  <Tab title="WebSocket">
+    WebSocket is a bidirectional transport. Because it is bidirectional, the node can push events to clients, enabling **subscriptions** (e.g., `eth_subscribe` for new blocks or pending transactions).
+
+    Enable the WebSocket server:
+
+    ```bash
+    reth node --ws
+    ```
+
+    The default port is `8546`.
+
+    Configure address, port, origins, and APIs:
+
+    ```bash
+    reth node --ws --ws.addr 127.0.0.1 --ws.port 8546 --ws.origins "*" --ws.api eth,net,web3
+    ```
+  </Tab>
+  <Tab title="IPC">
+    IPC is a local-only transport using UNIX sockets (Linux/macOS) or named pipes (Windows). It is the simplest transport and is enabled by default.
+
+    - **Linux/macOS**: `/tmp/reth.ipc`
+    - **Windows**: `\\.\pipe\reth.ipc`
+
+    The IPC transport has access to all namespaces by default.
+
+    Disable IPC:
+
+    ```bash
+    reth node --ipcdisable
+    ```
+
+    Change the IPC path:
+
+    ```bash
+    reth node --ipcpath /var/run/reth.ipc
+    ```
+  </Tab>
+</Tabs>
+
+## Enabling Namespaces
+
+Each namespace must be explicitly enabled per transport using `--http.api`, `--ws.api`, or (for IPC) all namespaces are available by default.
+
+```bash
+# Enable common namespaces over HTTP
+reth node --http --http.api eth,net,web3,txpool
+
+# Enable all namespaces (includes sensitive ones)
+reth node --http --http.api all
+
+# Enable full API over both HTTP and WebSocket
+reth node \
+  --http --http.api "eth,net,web3,txpool,debug,trace" \
+  --ws --ws.api "eth,net,web3,txpool"
+```
+
+<Warning>
+  Namespaces marked **Sensitive** (`admin`, `miner`, `testing`) should never be exposed publicly. They allow runtime reconfiguration of your node or access to signing keys.
+</Warning>
+
+## Making Requests
+
+### Using curl
+
+```bash
+# Get the current block number
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
+```
+
+```json
+{"jsonrpc":"2.0","id":1,"result":"0x1234abc"}
+```
+
+### Using cast (Foundry)
+
+[Foundry's `cast`](https://book.getfoundry.sh/cast/) provides a convenient CLI for interacting with the RPC:
+
+```bash
+# Get the latest block number
+cast block-number
+
+# Get node info (requires admin namespace)
+cast rpc admin_nodeInfo
+
+# Trace a transaction (requires debug namespace)
+cast rpc debug_traceTransaction 0xabc...
+
+# Replay block transactions (requires trace namespace)
+cast rpc trace_replayBlockTransactions '"latest"' '["trace"]'
+```
+
+### Batch Requests
+
+The JSON-RPC spec supports sending multiple requests in a single HTTP call:
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '[
+    {"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1},
+    {"jsonrpc":"2.0","method":"net_version","params":[],"id":2},
+    {"jsonrpc":"2.0","method":"web3_clientVersion","params":[],"id":3}
+  ]'
+```
+
+## Block Tags
+
+Many methods accept a block identifier. Supported values:
+
+| Value       | Description                                      |
+| ----------- | ------------------------------------------------ |
+| `latest`    | The most recently mined block                    |
+| `safe`      | The most recent safe block (post-Merge)          |
+| `finalized` | The most recent finalized block (post-Merge)     |
+| `pending`   | The pending block (in-mempool state)             |
+| `earliest`  | Block 0 (genesis)                                |
+| `0x...`     | A specific block number as a hex-encoded integer |

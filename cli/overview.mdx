@@ -1,0 +1,137 @@
+---
+title: "CLI Overview"
+description: "Reference for the reth command-line interface and its top-level commands, flags, and help system."
+---
+
+The `reth` binary exposes a single top-level entrypoint with subcommands for every major operation. Run any command with `--help` to see its options:
+
+```bash
+reth --help
+reth node --help
+reth db --help
+```
+
+## Top-level commands
+
+```bash
+reth [OPTIONS] <COMMAND>
+```
+
+| Command | Description |
+|---|---|
+| `node` | Start the Ethereum execution node |
+| `init` | Initialize the database from a genesis file |
+| `init-state` | Initialize the database from a state dump file |
+| `import` | Sync RLP encoded blocks from a file or files |
+| `import-era` | Sync ERA encoded blocks from a directory |
+| `export-era` | Export blocks to ERA1 files in a directory |
+| `dump-genesis` | Dump the genesis block JSON configuration to stdout |
+| `db` | Database debugging utilities |
+| `download` | Download public node snapshots |
+| `snapshot-manifest` | Generate a snapshot manifest from local archive files |
+| `stage` | Manipulate individual sync stages |
+| `p2p` | P2P debugging utilities |
+| `config` | Write current config to stdout |
+| `prune` | Prune data according to the configuration without limits |
+| `re-execute` | Re-execute blocks in parallel to verify historical sync |
+
+<CardGroup cols={2}>
+  <Card title="reth node" icon="server" href="/cli/node">
+    Start the node and configure networking, RPC, engine API, and sync.
+  </Card>
+  <Card title="reth db" icon="database" href="/cli/db">
+    Inspect, query, and manage the MDBX database and static files.
+  </Card>
+  <Card title="reth debug" icon="bug" href="/cli/debug">
+    Debug flags built into reth node for testing without a live consensus client.
+  </Card>
+  <Card title="reth import" icon="file-import" href="/cli/import">
+    Import blocks from RLP or ERA encoded files into the database.
+  </Card>
+</CardGroup>
+
+## Global logging flags
+
+These flags are available on every `reth` command.
+
+<AccordionGroup>
+  <Accordion title="Standard output logging">
+    | Flag | Default | Description |
+    |---|---|---|
+    | `--log.stdout.format <FORMAT>` | `terminal` | Log format for stdout. One of: `json`, `log-fmt`, `terminal` |
+    | `--log.stdout.filter <FILTER>` | `""` | Log filter directive for stdout (same syntax as `RUST_LOG`) |
+  </Accordion>
+
+  <Accordion title="File logging">
+    | Flag | Default | Description |
+    |---|---|---|
+    | `--log.file.format <FORMAT>` | `terminal` | Log format for log files. One of: `json`, `log-fmt`, `terminal` |
+    | `--log.file.filter <FILTER>` | `debug` | Log filter directive for log files |
+    | `--log.file.directory <PATH>` | `<CACHE_DIR>/logs` | Directory to write log files |
+    | `--log.file.name <NAME>` | `reth.log` | Prefix name for log files |
+    | `--log.file.max-size <SIZE>` | `200` | Maximum size (MB) of a single log file |
+    | `--log.file.max-files <COUNT>` | `5` (node), `0` (others) | Maximum number of log files to retain. Set to `0` to disable file logging |
+  </Accordion>
+
+  <Accordion title="journald and color">
+    | Flag | Default | Description |
+    |---|---|---|
+    | `--log.journald` | — | Write logs to journald |
+    | `--log.journald.filter <FILTER>` | `error` | Log filter for journald |
+    | `--color <COLOR>` | `always` | ANSI color output. One of: `always`, `auto`, `never` |
+  </Accordion>
+
+  <Accordion title="OpenTelemetry (OTLP) logs">
+    | Flag | Default | Description |
+    |---|---|---|
+    | `--logs-otlp[=<URL>]` | — | Export logs to an OTLP endpoint (HTTP: `http://localhost:4318/v1/logs`, gRPC: `http://localhost:4317`) |
+    | `--logs-otlp.filter <FILTER>` | `info` | Log filter for OTLP log exporter |
+  </Accordion>
+</AccordionGroup>
+
+## Verbosity shortcuts
+
+Use `-v` flags (additive) to control console log verbosity instead of `--log.stdout.filter`:
+
+```bash
+reth node -v      # Errors only
+reth node -vv     # Warnings
+reth node -vvv    # Info
+reth node -vvvv   # Debug
+reth node -vvvvv  # Trace (very verbose)
+reth node -q      # Silence all output
+```
+
+## OpenTelemetry tracing
+
+Export traces to any OTLP-compatible backend (Jaeger, Tempo, etc.):
+
+```bash
+reth node --tracing-otlp=http://localhost:4318/v1/traces \
+          --tracing-otlp-protocol http \
+          --tracing-otlp.filter info,reth=debug \
+          --tracing-otlp.sample-ratio 0.1
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--tracing-otlp[=<URL>]` | — | OTLP endpoint for trace export |
+| `--tracing-otlp-protocol <PROTOCOL>` | `http` | Transport protocol: `http` (port 4318) or `grpc` (port 4317) |
+| `--tracing-otlp.filter <FILTER>` | `debug` | Filter directive for trace export |
+| `--tracing-otlp.sample-ratio <RATIO>` | `1.0` | Sampling ratio 0.0–1.0. Use `0.0` to disable, `1.0` to sample all |
+
+## Getting help
+
+Every command and subcommand accepts `--help` or `-h`:
+
+```bash
+# Short summary
+reth -h
+reth node -h
+reth db -h
+
+# Full help with all flags
+reth --help
+reth node --help
+reth db stats --help
+```

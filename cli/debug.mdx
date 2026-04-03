@@ -1,0 +1,192 @@
+---
+title: "reth debug"
+description: "Debug flags for reth node that enable testing, tracing, and local development without a live consensus client."
+---
+
+Reth does not have a standalone `reth debug` top-level command. Instead, debug capabilities are exposed as flag groups within `reth node`. These flags cover fake consensus clients, engine API interception, invalid-block hooks, and fine-grained stage control.
+
+<Note>
+  All flags on this page are passed to `reth node`. For example: `reth node --debug.tip 0x...`
+</Note>
+
+## Fake consensus clients
+
+Use these flags to run the node without a real consensus client. Useful for testing, replaying chain history, or bringing up a local node quickly.
+
+<Warning>
+  These options are not suitable for production. Use only for local development and testing.
+</Warning>
+
+<AccordionGroup>
+  <Accordion title="--debug.tip — manual chain tip">
+    Set the chain tip manually using a block hash. Reth simulates a single `engine_forkchoiceUpdated` message and syncs to that block.
+
+    ```bash
+    reth node --debug.tip 0x9ba680d8479f936f84065ce94f58c5f0cc1adb128945167e0875ba41a36cd93b
+    ```
+
+    The node stops advancing after reaching the specified block. Useful for reproducing a specific chain state.
+  </Accordion>
+
+  <Accordion title="--debug.etherscan — Etherscan as block source">
+    Run a fake consensus client that advances the chain using recent block hashes fetched from Etherscan. Requires the `ETHERSCAN_API_KEY` environment variable.
+
+    ```bash
+    export ETHERSCAN_API_KEY=your_api_key
+    reth node --debug.etherscan
+
+    # With a custom Etherscan API URL
+    reth node --debug.etherscan https://api.etherscan.io/api
+    ```
+  </Accordion>
+
+  <Accordion title="--debug.rpc-consensus-url — RPC as block source">
+    Run a fake consensus client that fetches blocks from an existing Ethereum RPC endpoint. Supports both HTTP (polling) and WebSocket (subscriptions).
+
+    ```bash
+    # HTTP endpoint — polls for new blocks
+    reth node --debug.rpc-consensus-url https://eth-mainnet.g.alchemy.com/v2/your-key
+
+    # WebSocket endpoint — subscribes to new heads
+    reth node --debug.rpc-consensus-url wss://eth-mainnet.g.alchemy.com/v2/your-key
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Sync control
+
+| Flag | Description |
+|---|---|
+| `--debug.max-block <BLOCK_NUMBER>` | Stop syncing after reaching the specified block number |
+| `--debug.terminate` | Terminate the node after the pipeline sync completes. Useful for benchmarking the sync process |
+
+Example — sync to block 20000000 and exit:
+
+```bash
+reth node \
+  --debug.rpc-consensus-url https://eth.example.com \
+  --debug.max-block 20000000 \
+  --debug.terminate
+```
+
+## Engine API interception
+
+These flags intercept Engine API messages for testing reorg behavior and API fuzzing:
+
+| Flag | Description |
+|---|---|
+| `--debug.skip-fcu <N>` | Skip N consecutive `engine_forkchoiceUpdated` calls |
+| `--debug.skip-new-payload <N>` | Skip N consecutive `engine_newPayload` calls |
+| `--debug.reorg-frequency <N>` | Trigger a chain reorg every N blocks |
+| `--debug.reorg-depth <N>` | Depth of each simulated chain reorg |
+| `--debug.engine-api-store <PATH>` | Write all intercepted Engine API messages to the specified directory |
+
+Example — store Engine API messages for replay:
+
+```bash
+reth node \
+  --authrpc.jwtsecret /path/to/jwt.hex \
+  --debug.engine-api-store /tmp/engine-messages
+```
+
+## Invalid block hooks
+
+When Reth encounters a bad block during execution, these flags control how it responds:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--debug.invalid-block-hook <TYPES>` | `witness` | Comma-separated hooks to install. Options: `witness`, `pre-state`, `opcode` |
+| `--debug.healthy-node-rpc-url <URL>` | — | RPC endpoint of a healthy node for comparison. When set, Reth collects execution witnesses from this node and diffs them against local execution on bad blocks |
+
+Example — capture full state diff on bad blocks:
+
+```bash
+reth node \
+  --authrpc.jwtsecret /path/to/jwt.hex \
+  --debug.invalid-block-hook witness,pre-state \
+  --debug.healthy-node-rpc-url https://healthy-node.example.com
+```
+
+## Startup sync state
+
+| Flag | Description |
+|---|---|
+| `--debug.startup-sync-state-idle` | Mark the node as idle when backfill is not running. This makes `eth_syncing` return "Idle" at startup before the node receives new blocks |
+
+## Ethstats reporting
+
+Connect the node to an ethstats dashboard for real-time monitoring:
+
+```bash
+reth node --ethstats nodename:secret@host:port
+```
+
+| Flag | Description |
+|---|---|
+| `--ethstats <CONN>` | Connection string in the format `nodename:secret@host:port` |
+
+## Debugging workflows
+
+<AccordionGroup>
+  <Accordion title="Reproduce a specific block range">
+    Sync from genesis to a specific block without a consensus client, then inspect the resulting state.
+
+    ```bash
+    reth node \
+      --debug.rpc-consensus-url https://eth-mainnet.g.alchemy.com/v2/your-key \
+      --debug.max-block 18000000 \
+      --debug.terminate \
+      --datadir /tmp/reth-debug
+    ```
+
+    After the node exits, use `reth db` to inspect the resulting state:
+
+    ```bash
+    reth db stats --datadir /tmp/reth-debug
+    ```
+  </Accordion>
+
+  <Accordion title="Diagnose a bad block">
+    If you have a block that causes issues, enable witness capture and compare against a healthy node:
+
+    ```bash
+    reth node \
+      --authrpc.jwtsecret /path/to/jwt.hex \
+      --debug.invalid-block-hook witness,pre-state \
+      --debug.healthy-node-rpc-url https://healthy-rpc.example.com
+    ```
+
+    Reth logs a detailed diff when it encounters a divergent block.
+  </Accordion>
+
+  <Accordion title="Capture Engine API traffic">
+    Record Engine API messages to replay later or analyze consensus client behavior:
+
+    ```bash
+    mkdir -p /tmp/engine-log
+
+    reth node \
+      --authrpc.jwtsecret /path/to/jwt.hex \
+      --debug.engine-api-store /tmp/engine-log
+    ```
+  </Accordion>
+
+  <Accordion title="Test reorg handling">
+    Simulate chain reorgs at a fixed frequency to test application resilience:
+
+    ```bash
+    reth node \
+      --debug.rpc-consensus-url https://eth.example.com \
+      --debug.reorg-frequency 10 \
+      --debug.reorg-depth 3
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related flags in reth node
+
+The following flag groups in `reth node` are also useful for debugging:
+
+- **`--db.*`** — control database logging level and behavior. See the [reth node reference](/cli/node#database).
+- **`--engine.*`** — tune engine persistence, caching, and state root behavior. See the [reth node reference](/cli/node#engine-configuration).
+- **`-vvvv`** / **`--log.file.filter debug`** — increase log verbosity for detailed output.

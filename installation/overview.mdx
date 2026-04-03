@@ -1,0 +1,72 @@
+---
+title: "Installation"
+description: "Install Reth using a pre-built binary, Docker, or build from source on Linux or macOS."
+---
+
+Reth runs on Linux and macOS. Windows support is tracked but not officially released.
+
+There are three ways to install Reth:
+
+<CardGroup cols={3}>
+  <Card title="Pre-built binaries" icon="download" href="https://github.com/paradigmxyz/reth/releases">
+    Download static executables for Linux, macOS, or Windows from GitHub Releases. Fastest way to get started.
+  </Card>
+  <Card title="Docker" icon="docker" href="/installation/docker">
+    Pull the official image from GitHub Container Registry and run Reth in a container with a single command.
+  </Card>
+  <Card title="Build from source" icon="code" href="/installation/source">
+    Compile Reth yourself using Rust and Cargo. Required for custom builds or unsupported platforms.
+  </Card>
+</CardGroup>
+
+<Note>
+If you have Docker installed, the [Docker Compose](/installation/docker#using-docker-compose) setup gets Reth, Lighthouse (consensus client), Prometheus, and Grafana running and syncing with a single command.
+</Note>
+
+## Pre-built binaries
+
+[Pre-compiled binaries](https://github.com/paradigmxyz/reth/releases) are available for Windows, macOS, and Linux as static executables. This is the recommended method for most users.
+
+**macOS / Linuxbrew** users can install via Homebrew:
+
+```bash
+brew install paradigmxyz/brew/reth
+```
+
+**Arch Linux** users can install from the AUR:
+
+```bash
+paru -S reth        # Stable release
+paru -S reth-git    # Latest from git
+```
+
+### Verify your installation
+
+After installing, confirm Reth is working correctly:
+
+```bash
+reth --version
+```
+
+You should see the version number printed to the terminal.
+
+### Signature verification
+
+You can verify the integrity of any release using GPG. First, import the release signing key:
+
+```bash
+gpg --keyserver keyserver.ubuntu.com --recv-keys 50FB7CC55B2E8AFA59FE03B7AA5ED56A7FBF253E
+```
+
+Then verify the signature file that accompanies each release:
+
+```bash
+gpg --verify reth-v1.0.0-x86_64-unknown-linux-gnu.tar.gz.asc \
+             reth-v1.0.0-x86_64-unknown-linux-gnu.tar.gz
+```
+
+Replace the filenames with those matching your downloaded release.
+
+## Next steps
+
+Once Reth is installed, check the [system requirements](/run/system-requirements) to ensure your hardware is ready, then follow the guide to [run a node](/run/overview).

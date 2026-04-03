@@ -1,0 +1,237 @@
+---
+title: "Consensus"
+description: "Block validation traits in Reth and how they integrate with the Engine API."
+---
+
+The consensus component validates blocks according to Ethereum protocol rules. It operates across three phases: standalone header validation, pre-execution body validation, and post-execution result verification.
+
+## Overview
+
+<CardGroup cols={2}>
+  <Card title="Header validation" icon="heading">
+    Validates individual headers and their relationship to the parent: timestamp ordering, gas limit changes, extra data size, and PoS/PoW-specific checks.
+  </Card>
+  <Card title="Pre-execution validation" icon="list-check">
+    Validates the block body against its header before transactions are executed: transaction root, withdrawals root, blob validation.
+  </Card>
+  <Card title="Post-execution validation" icon="circle-check">
+    Verifies the execution outcome against the header after transactions run: gas used, receipt root, and logs bloom.
+  </Card>
+  <Card title="Engine API integration" icon="plug">
+    Applied automatically during `engine_newPayload` processing. Payload attribute validation for block building is handled separately by the engine layer.
+  </Card>
+</CardGroup>
+
+## Trait hierarchy
+
+Consensus validation is split across three traits, each extending the previous:
+
+```
+HeaderValidator
+    └── Consensus (adds body validation)
+            └── FullConsensus (adds post-execution validation)
+```
+
+### HeaderValidator
+
+Validates block headers in isolation and against their parent. Applied early in the validation pipeline before block execution.
+
+```rust
+pub trait HeaderValidator<H = Header>: Debug + Send + Sync {
+    /// Validate a standalone header (hashes, format).
+    fn validate_header(
+        &self,
+        header: &SealedHeader<H>,
+    ) -> Result<(), ConsensusError>;
+
+    /// Validate a header against its parent (number, timestamp, basefee, gas limit).
+    fn validate_header_against_parent(
+        &self,
+        header: &SealedHeader<H>,
+        parent: &SealedHeader<H>,
+    ) -> Result<(), ConsensusError>;
+
+    /// Validate a sequence of headers in ascending order.
+    fn validate_header_range(
+        &self,
+        headers: &[SealedHeader<H>],
+    ) -> Result<(), HeaderConsensusError<H>>;
+}
+```
+
+### Consensus
+
+Extends `HeaderValidator` with block body validation. Checks that the body matches the header and runs pre-execution checks.
+
+```rust
+pub trait Consensus<B: Block>: HeaderValidator<B::Header> {
+    /// Validate that body fields match the header (tx root, withdrawals root, blobs).
+    fn validate_body_against_header(
+        &self,
+        body: &B::Body,
+        header: &SealedHeader<B::Header>,
+    ) -> Result<(), ConsensusError>;
+
+    /// Full pre-execution validation (header + body together).
+    fn validate_block_pre_execution(
+        &self,
+        block: &SealedBlock<B>,
+    ) -> Result<(), ConsensusError>;
+}
+```
+
+### FullConsensus
+
+Extends `Consensus` with post-execution validation. Applied after the EVM executes all transactions to verify the outcome matches the header.
+
+```rust
+pub trait FullConsensus<N: NodePrimitives>: Consensus<N::Block> {
+    /// Validate the block execution result against the header.
+    ///
+    /// Checks: gas used, receipt root, logs bloom.
+    /// If `receipt_root_bloom` is provided, uses pre-computed values instead of
+    /// recomputing from receipts.
+    fn validate_block_post_execution(
+        &self,
+        block: &RecoveredBlock<N::Block>,
+        result: &BlockExecutionResult<N::Receipt>,
+        receipt_root_bloom: Option<ReceiptRootBloom>,
+    ) -> Result<(), ConsensusError>;
+}
+```
+
+<Note>
+  All three traits are `auto_impl`-enabled for `&T` and `Arc<T>`, so you can wrap any implementation in an `Arc` and pass it across threads without additional boilerplate.
+</Note>
+
+## Validation flow
+
+During `engine_newPayload`, the consensus component is applied in order:
+
+<Steps>
+  <Step title="Header validation">
+    `validate_header` checks the header in isolation. `validate_header_against_parent` checks it against the known parent.
+  </Step>
+  <Step title="Body validation">
+    `validate_body_against_header` checks that the transaction root, withdrawals root, and blob-related fields match the header.
+  </Step>
+  <Step title="Pre-execution check">
+    `validate_block_pre_execution` runs any remaining checks that don't require world state (e.g., transaction count limits).
+  </Step>
+  <Step title="EVM execution">
+    The EVM executes all transactions and produces a `BlockExecutionResult` with receipts, gas used, and state changes.
+  </Step>
+  <Step title="Post-execution check">
+    `validate_block_post_execution` verifies gas used, receipt root, and logs bloom against the header.
+  </Step>
+</Steps>
+
+## Key validation checks
+
+### Header checks
+
+| Check | Rule |
+|---|---|
+| Timestamp | Must be strictly greater than the parent's timestamp |
+| Gas limit | Change must be within ±1/1024 of the parent gas limit |
+| Gas limit bounds | Must be between `MINIMUM_GAS_LIMIT` and `MAXIMUM_GAS_LIMIT_BLOCK` |
+| Extra data | Size restricted to 32 bytes on mainnet (PoS) |
+| Base fee | Must follow EIP-1559 adjustment formula |
+
+### Body checks
+
+| Check | Rule |
+|---|---|
+| Transaction root | Merkle root of all transactions must match the header |
+| Withdrawals root | Required for post-Shanghai blocks; must match the header |
+| Blob gas used | Must match the sum of blob gas across all EIP-4844 transactions |
+| Excess blob gas | Must follow EIP-4844 accumulation formula |
+
+### Post-execution checks
+
+| Check | Rule |
+|---|---|
+| Gas used | Sum of all transaction gas used must match `header.gas_used` |
+| Receipts root | Merkle root of all receipts must match `header.receipts_root` |
+| Logs bloom | Union of all receipt blooms must match `header.logs_bloom` |
+
+## ConsensusError variants
+
+The `ConsensusError` enum covers all validation failure cases. Common variants include:
+
+```rust
+ConsensusError::HeaderGasUsedExceedsGasLimit { gas_used, gas_limit }
+ConsensusError::TimestampIsInPast { parent_timestamp, timestamp }
+ConsensusError::BaseFeeMissing
+ConsensusError::BlockGasUsed { gas, gas_spent_by_tx }
+ConsensusError::BodyTransactionRootDiff(GotExpected { got, expected })
+ConsensusError::WithdrawalsRootMissing
+```
+
+## Implementing a custom consensus
+
+To implement a custom consensus rule (for example, for a custom chain or testnet), implement `HeaderValidator` and `Consensus`, then optionally `FullConsensus`:
+
+```rust
+use reth_consensus::{Consensus, ConsensusError, HeaderValidator};
+use reth_primitives_traits::{SealedBlock, SealedHeader};
+
+#[derive(Debug, Clone)]
+pub struct MyConsensus;
+
+impl HeaderValidator for MyConsensus {
+    fn validate_header(&self, header: &SealedHeader) -> Result<(), ConsensusError> {
+        // Custom header checks here.
+        // Call the standard Ethereum checks first if you want to extend rather
+        // than replace them.
+        Ok(())
+    }
+
+    fn validate_header_against_parent(
+        &self,
+        header: &SealedHeader,
+        parent: &SealedHeader,
+    ) -> Result<(), ConsensusError> {
+        // Custom parent relationship checks.
+        Ok(())
+    }
+}
+
+impl<B: reth_primitives_traits::Block> Consensus<B> for MyConsensus {
+    fn validate_body_against_header(
+        &self,
+        body: &B::Body,
+        header: &SealedHeader<B::Header>,
+    ) -> Result<(), ConsensusError> {
+        Ok(())
+    }
+
+    fn validate_block_pre_execution(
+        &self,
+        block: &SealedBlock<B>,
+    ) -> Result<(), ConsensusError> {
+        Ok(())
+    }
+}
+```
+
+<Warning>
+  Relaxing consensus rules (for example, skipping the transaction root check) breaks compatibility with the canonical Ethereum network. Only do this for private networks or testing.
+</Warning>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="EVM" href="/sdk/node-components/evm">
+    Transaction execution that happens between pre- and post-execution consensus checks.
+  </Card>
+  <Card title="Transaction pool" href="/sdk/node-components/pool">
+    How transactions are validated before entering the mempool.
+  </Card>
+  <Card title="Network" href="/sdk/node-components/network">
+    How blocks arrive from peers and how the Engine API drives consensus.
+  </Card>
+  <Card title="RPC" href="/sdk/node-components/rpc">
+    JSON-RPC endpoints for querying chain state and block information.
+  </Card>
+</CardGroup>

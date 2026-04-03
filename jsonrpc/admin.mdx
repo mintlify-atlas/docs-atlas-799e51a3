@@ -1,0 +1,323 @@
+---
+title: "admin Namespace"
+description: "Manage peer connections, inspect node information, and configure your Reth node at runtime."
+---
+
+The `admin` namespace provides methods to manage your Reth node at runtime: add and remove peers, query connected peer details, inspect node identity, clear the transaction pool, and subscribe to peer events.
+
+Enable the `admin` namespace:
+
+```bash
+reth node --http --http.api admin
+```
+
+<Warning>
+  The `admin` namespace is **sensitive**. It can reconfigure your node at runtime. Do not expose it publicly. Restrict access using `--http.addr`, firewalls, or authentication proxies.
+</Warning>
+
+---
+
+## Peer Management
+
+### `admin_addPeer`
+
+Adds a peer to the node's peer set and attempts to connect to it.
+
+**Parameters:**
+- `enode` — `NodeRecord`: the [enode URL](https://ethereum.org/en/developers/docs/networking-layer/network-addresses/#enode) of the remote peer
+
+**Returns:** `bool` — `true` if the peer was accepted, `false` otherwise.
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc":"2.0","method":"admin_addPeer","id":1,
+    "params":["enode://a979fb575495b8d6db44f750317d0f4622bf4c2aa3365d6af7c284339968eef29b69ad0dce72a4d8db5ebb4968de0e3bec910127f134779fbcb0cb6d3331163c@52.16.188.185:30303"]
+  }'
+```
+
+```json
+{"jsonrpc":"2.0","id":1,"result":true}
+```
+
+---
+
+### `admin_removePeer`
+
+Disconnects from a peer if a connection exists.
+
+**Parameters:**
+- `enode` — `AnyNode`: enode URL or peer ID
+
+**Returns:** `bool` — `true` if the peer was successfully removed.
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc":"2.0","method":"admin_removePeer","id":1,
+    "params":["enode://a979fb575495b8d6db44f750317d0f4622bf4c2aa3365d6af7c284339968eef29b69ad0dce72a4d8db5ebb4968de0e3bec910127f134779fbcb0cb6d3331163c@52.16.188.185:30303"]
+  }'
+```
+
+```json
+{"jsonrpc":"2.0","id":1,"result":true}
+```
+
+---
+
+### `admin_addTrustedPeer`
+
+Adds a peer to the trusted peer set. Trusted peers can always connect even when the node's maximum peer slot count is full.
+
+**Parameters:**
+- `enode` — `AnyNode`
+
+**Returns:** `bool`
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc":"2.0","method":"admin_addTrustedPeer","id":1,
+    "params":["enode://a979fb575495b8d6db44f750317d0f4622bf4c2aa3365d6af7c284339968eef29b69ad0dce72a4d8db5ebb4968de0e3bec910127f134779fbcb0cb6d3331163c@52.16.188.185:30303"]
+  }'
+```
+
+---
+
+### `admin_removeTrustedPeer`
+
+Removes a peer from the trusted peer set. Note: this does not disconnect the peer; it only removes its trusted status.
+
+**Parameters:**
+- `enode` — `AnyNode`
+
+**Returns:** `bool`
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc":"2.0","method":"admin_removeTrustedPeer","id":1,
+    "params":["enode://a979fb575495b8d6db44f750317d0f4622bf4c2aa3365d6af7c284339968eef29b69ad0dce72a4d8db5ebb4968de0e3bec910127f134779fbcb0cb6d3331163c@52.16.188.185:30303"]
+  }'
+```
+
+---
+
+### `admin_peers`
+
+Returns information about all peers currently connected to the node.
+
+**Parameters:** None
+
+**Returns:** `Array<PeerInfo>` — list of connected peer objects.
+
+Each peer object includes:
+
+<ResponseField name="id" type="string">
+  The peer's node ID (public key, 64 hex bytes).
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  The peer's client version string (e.g. `reth/v1.3.0/x86_64-unknown-linux-gnu`).
+</ResponseField>
+
+<ResponseField name="enode" type="string">
+  The peer's enode URL.
+</ResponseField>
+
+<ResponseField name="enr" type="string">
+  The peer's Ethereum Node Record (ENR), if available.
+</ResponseField>
+
+<ResponseField name="caps" type="Array<string>">
+  List of protocol capabilities (e.g. `["eth/68"]`).
+</ResponseField>
+
+<ResponseField name="network" type="object">
+  Network connection details: `remoteAddress`, `localAddress`, `inbound`, `trusted`, `staticNode`.
+</ResponseField>
+
+<ResponseField name="protocols" type="object">
+  Protocol-specific information (e.g. ETH protocol version).
+</ResponseField>
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"admin_peers","params":[],"id":1}'
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [{
+    "id": "44826a5d6a55f88a18298bca4773fca5749cdc3a5c9f308aa7d810e9b31123f3e7c5fba0b1d70aac5308426f47df2a128a6747040a3815cc7dd7167d03be320d",
+    "name": "reth/v1.3.0/x86_64-unknown-linux-gnu",
+    "enode": "enode://44826a5d6a55f88a18298bca4773fca5749cdc3a5c9f308aa7d810e9b31123f3e7c5fba0b1d70aac5308426f47df2a128a6747040a3815cc7dd7167d03be320d@192.168.1.1:30303",
+    "enr": "enr:-IS4QHCYr...",
+    "caps": ["eth/68"],
+    "network": {
+      "remoteAddress": "192.168.1.1:30303",
+      "localAddress": "127.0.0.1:30303",
+      "inbound": false,
+      "trusted": false,
+      "staticNode": false
+    },
+    "protocols": {
+      "eth": { "version": 68 }
+    }
+  }]
+}
+```
+
+---
+
+## Node Information
+
+### `admin_nodeInfo`
+
+Returns all information about the running node: its identity, enode URL, listening address, ports, and protocol status.
+
+**Parameters:** None
+
+**Returns:** `NodeInfo`
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"admin_nodeInfo","params":[],"id":1}'
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "enode": "enode://44826a5d6a55f88a18298bca4773fca5749cdc3a5c9f308aa7d810e9b31123f3e7c5fba0b1d70aac5308426f47df2a128a6747040a3815cc7dd7167d03be320d@[::]:30303",
+    "id": "44826a5d6a55f88a18298bca4773fca5749cdc3a5c9f308aa7d810e9b31123f3e7c5fba0b1d70aac5308426f47df2a128a6747040a3815cc7dd7167d03be320d",
+    "ip": "::",
+    "listenAddr": "[::]:30303",
+    "name": "reth/v1.3.0/x86_64-unknown-linux-gnu",
+    "ports": {
+      "discovery": 30303,
+      "listener": 30303
+    },
+    "protocols": {
+      "eth": {
+        "difficulty": 17334254859343145000,
+        "genesis": "0xd4e56740f876aef8c010b86a40d5f56745a118d0906a34e69aec8c0db1cb8fa3",
+        "head": "0xb83f73fbe6220c111136aefd27b160bf4a34085c65ba89f24246b3162257c36a",
+        "network": 1
+      }
+    }
+  }
+}
+```
+
+---
+
+## Transaction Pool Management
+
+### `admin_clearTxpool`
+
+Removes all transactions from the transaction pool. Returns the number of transactions that were removed.
+
+**Parameters:** None
+
+**Returns:** `u64` — number of transactions removed.
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"admin_clearTxpool","params":[],"id":1}'
+```
+
+```json
+{"jsonrpc":"2.0","id":1,"result":42}
+```
+
+<Warning>
+  This permanently removes pending transactions from the local pool. Transactions that have not been broadcast to the wider network will be lost.
+</Warning>
+
+---
+
+## Subscriptions (WebSocket / IPC only)
+
+### `admin_peerEvents` / `admin_peerEvents_unsubscribe`
+
+Subscribes to peer lifecycle events: connections (`add`), disconnections (`drop`), and errors (`error`). Requires a WebSocket or IPC connection.
+
+**Subscribe — Parameters:** None
+
+**Returns:** `string` — subscription ID.
+
+**Unsubscribe — Parameters:**
+- `subscriptionId` — `string`
+
+```bash
+# Subscribe (via WebSocket)
+# {"jsonrpc":"2.0","id":1,"method":"admin_peerEvents","params":[]}
+# Response: {"jsonrpc":"2.0","id":1,"result":"0xcd0c3e8af590364c09d0fa6a1210faf5"}
+```
+
+Events are delivered as:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "admin_subscription",
+  "params": {
+    "subscription": "0xcd0c3e8af590364c09d0fa6a1210faf5",
+    "result": {
+      "type": "add",
+      "peer": {
+        "id": "44826a5d6a55f88a18298bca4773fca5749cdc3a5c9f308aa7d810e9b31123f3e7c5fba0b1d70aac5308426f47df2a128a6747040a3815cc7dd7167d03be320d",
+        "enode": "enode://44826a5d...@192.168.1.1:30303",
+        "addr": "192.168.1.1:30303"
+      }
+    }
+  }
+}
+```
+
+Event types:
+
+| Type    | Description                                       |
+| ------- | ------------------------------------------------- |
+| `add`   | A new peer connected successfully                 |
+| `drop`  | A peer disconnected; `error` field has the reason |
+| `error` | A peer connection error occurred                  |
+
+Unsubscribe:
+
+```bash
+# {"jsonrpc":"2.0","id":2,"method":"admin_peerEvents_unsubscribe","params":["0xcd0c3e8af590364c09d0fa6a1210faf5"]}
+# Response: {"jsonrpc":"2.0","id":2,"result":true}
+```
+
+---
+
+## Using cast (Foundry)
+
+```bash
+# Inspect node identity
+cast rpc admin_nodeInfo
+
+# List connected peers
+cast rpc admin_peers
+
+# Add a specific peer
+cast rpc admin_addPeer '"enode://a979fb...@52.16.188.185:30303"'
+
+# Remove a peer
+cast rpc admin_removePeer '"enode://a979fb...@52.16.188.185:30303"'
+
+# Clear the transaction pool
+cast rpc admin_clearTxpool
+```

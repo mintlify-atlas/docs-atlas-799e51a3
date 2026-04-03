@@ -1,0 +1,341 @@
+---
+title: "Configuration"
+description: "Configure Reth using the reth.toml file, covering sync stages, P2P networking, pruning, and session settings."
+---
+
+Reth places a configuration file named `reth.toml` in the data directory when the node starts for the first time. The file uses [TOML](https://toml.io/) format and controls every aspect of node behavior — from sync stage tuning to peer management.
+
+## Data directory
+
+The default data directory is platform-dependent:
+
+| Platform | Default path |
+|---|---|
+| Linux | `$XDG_DATA_HOME/reth/` or `$HOME/.local/share/reth/` |
+| macOS | `$HOME/Library/Application Support/reth/` |
+| Windows | `{FOLDERID_RoamingAppData}/reth/` |
+
+You can override the data directory at runtime using `--datadir`. Static files (headers, transactions, receipts) can be stored separately on slower storage using `--datadir.static-files`.
+
+## Configuration sections
+
+The `reth.toml` file is divided into the following top-level sections:
+
+- [`[stages]`](#the-stages-section) — Sync stage behavior and resource limits
+- [`[peers]`](#the-peers-section) — Peer connection management and reputation
+- [`[sessions]`](#the-sessions-section) — Per-connection buffer and timeout settings
+- [`[prune]`](#the-prune-section) — Data pruning configuration
+- [`[static_files]`](#the-static-files-section) — Static file segmentation
+
+## The `[stages]` section
+
+The stages section controls how Reth's individual sync stages behave. Each stage has independent settings for concurrency, buffer sizes, and commit frequency. The defaults are reasonable for most hardware, but tuning them can improve sync speed or reduce memory usage.
+
+### `era`
+
+Configures pre-synced ERA1 data ingestion from a local directory or remote host. Use this to bootstrap sync from ERA1 archive files instead of downloading from P2P.
+
+```toml
+[stages.era]
+# Use a local directory containing ERA1 files (conflicts with `url`)
+path = "/path/to/era1"
+# Or download ERA1 files from a remote host (conflicts with `path`)
+# url = "https://example.com/era1/"
+# When using `url`, specify a temporary download folder
+# folder = "/path/to/reth/era"
+```
+
+### `headers`
+
+Controls concurrent header downloads and buffering during the headers sync stage. Increasing concurrency speeds up sync at the cost of bandwidth and memory.
+
+```toml
+[stages.headers]
+# Minimum and maximum concurrent requests in flight
+downloader_min_concurrent_requests = 5
+downloader_max_concurrent_requests = 100
+# Maximum number of responses buffered before pausing requests
+downloader_max_buffered_responses = 100
+# Maximum headers to request from a single peer at once
+downloader_request_limit = 1000
+# Number of headers to accumulate before writing to disk
+commit_threshold = 10000
+```
+
+### `bodies`
+
+Controls block body downloads. Tuning the buffer size lets Reth saturate bandwidth for longer periods, but increases memory usage.
+
+```toml
+[stages.bodies]
+# Maximum bodies to request from a peer at once
+downloader_request_limit = 200
+# Maximum bodies to download before flushing to disk
+downloader_stream_batch_size = 1000
+# Internal block buffer size in bytes (default: ~2GB)
+downloader_max_buffered_blocks_size_bytes = 2147483648
+# Minimum and maximum concurrent requests
+downloader_min_concurrent_requests = 5
+downloader_max_concurrent_requests = 100
+```
+
+### `sender_recovery`
+
+Recovers transaction sender addresses from signatures. This is a CPU-bound operation run in parallel.
+
+```toml
+[stages.sender_recovery]
+# Transactions to process before writing results to disk
+commit_threshold = 5000000
+```
+
+### `execution`
+
+The execution stage is the most resource-intensive part of sync. It executes historical transactions, reads and writes account/storage state, and generates changesets. Multiple thresholds control when accumulated results are flushed to disk — the first threshold reached triggers a commit.
+
+```toml
+[stages.execution]
+# Maximum blocks to process before committing
+max_blocks = 500000
+# Maximum state changes to hold in memory before committing
+max_changes = 5000000
+# Maximum cumulative gas to process before committing
+max_cumulative_gas = 1500000000 # 30_000_000 * 50_000
+# Maximum wall-clock time before committing
+max_duration = '10m'
+```
+
+<Note>
+  Lower thresholds mean more frequent disk writes and lower memory use, but slower sync. Reth maintains an internal cache for the entire duration of each execution range, so larger ranges benefit from better cache hit rates.
+</Note>
+
+### `account_hashing` and `storage_hashing`
+
+These stages build secondary index tables keyed by hashed addresses and slots, used to compute the state root.
+
+```toml
+[stages.account_hashing]
+# Rebuild from scratch if more than this many blocks changed
+clean_threshold = 500000
+# Accounts to process before writing to disk
+commit_threshold = 100000
+
+[stages.storage_hashing]
+clean_threshold = 500000
+commit_threshold = 100000
+```
+
+### `merkle`
+
+Computes the state root using the hashed account and storage indexes. For large sync ranges, incremental root building is limited to avoid memory pressure.
+
+```toml
+[stages.merkle]
+# Maximum blocks for incremental root updates before switching to full rebuild
+incremental_threshold = 7000
+# Rebuild the full trie from scratch after this many blocks
+rebuild_threshold = 100000
+```
+
+### `transaction_lookup`
+
+Builds a mapping from transaction hashes to sequential transaction IDs.
+
+```toml
+[stages.transaction_lookup]
+chunk_size = 5000000
+```
+
+### `index_account_history` and `index_storage_history`
+
+Build indexes tracking which blocks modified each account or storage slot.
+
+```toml
+[stages.index_account_history]
+commit_threshold = 100000
+
+[stages.index_storage_history]
+commit_threshold = 100000
+```
+
+### `prune`
+
+Controls how frequently the prune stage commits its progress.
+
+```toml
+[stages.prune]
+commit_threshold = 1_000_000
+```
+
+### `etl`
+
+The ETL (extract, transform, load) collector is used internally to insert data into MDBX in sorted order. It can spill to disk when data exceeds the in-memory threshold.
+
+```toml
+[stages.etl]
+# Optional directory for temporary ETL files (defaults to datadir/etl-tmp)
+# dir = "/path/to/reth/etl-tmp"
+# Maximum data held in memory before flushing to disk (~500MB default)
+file_size = 524_288_000
+```
+
+## The `[peers]` section
+
+Controls how Reth discovers and maintains connections to peers on the P2P network.
+
+```toml
+[peers]
+# How often to attempt outgoing connections when slots are available
+refill_slots_interval = '5s'
+# ENRs for trusted peers that Reth will always try to connect to
+trusted_nodes = []
+# If true, Reth only connects to trusted_nodes
+connect_trusted_nodes_only = false
+# Maximum backoff attempts before dropping a non-trusted peer
+max_backoff_count = 5
+# DNS resolution refresh interval for trusted nodes
+trusted_nodes_resolution_interval = '1h'
+# Duration for which misbehaving peers are banned
+ban_duration = '12h'
+# Per-IP throttle for inbound connection attempts
+incoming_ip_throttle_duration = '30s'
+```
+
+### `connection_info`
+
+```toml
+[peers.connection_info]
+# Maximum number of outbound peers (peers we dial)
+max_outbound = 100
+# Maximum number of inbound peers (peers that dial us)
+max_inbound = 30
+# Maximum concurrent outbound dial attempts
+max_concurrent_outbound_dials = 15
+```
+
+### `reputation_weights`
+
+Configures the penalty applied to a peer's reputation score for various protocol violations. Peers starting at 0 accumulate reputation over time, and fall below a threshold if they misbehave.
+
+```toml
+[peers.reputation_weights]
+bad_message = -16384
+bad_block = -16384
+bad_transactions = -16384
+already_seen_transactions = 0
+timeout = -4096
+bad_protocol = -2147483648
+failed_to_connect = -25600
+dropped = -4096
+bad_announcement = -1024
+```
+
+### `backoff_durations`
+
+Controls how long Reth waits before re-attempting to connect to a peer that previously failed to connect.
+
+```toml
+[peers.backoff_durations]
+low = '30s'
+medium = '3m'
+high = '15m'
+max = '1h'
+```
+
+## The `[sessions]` section
+
+Configures per-connection buffer sizes and timeouts. Buffer sizes are allocated per peer, so increasing them has a multiplied effect on total memory consumption.
+
+```toml
+[sessions]
+# Pending outgoing command buffer size per session
+session_command_buffer = 32
+# Pending incoming event buffer size per session
+session_event_buffer = 260
+
+[sessions.initial_internal_request_timeout]
+secs = 20
+nanos = 0
+
+# Peers violating the protocol after this timeout are permanently banned
+[sessions.protocol_breach_request_timeout]
+secs = 120
+nanos = 0
+
+[sessions.pending_session_timeout]
+secs = 20
+nanos = 0
+
+# Optional per-state connection limits (unset = no limit)
+[sessions.limits]
+max_pending_inbound = 100
+max_pending_outbound = 50
+max_established_inbound = 100
+max_established_outbound = 50
+```
+
+## The `[prune]` section
+
+Configures which historical data segments to prune and when. By default, no pruning is performed and Reth runs as an archive node. Each segment can be configured independently.
+
+<Warning>
+  Pruning is irreversible. Once historical state has been pruned, it cannot be recovered without re-syncing from genesis or from a snapshot.
+</Warning>
+
+### Example: custom pruning configuration
+
+The following configuration keeps the last 100,000 blocks of account/storage history, prunes all receipts before block 1,920,000, and runs pruning every 5 blocks:
+
+```toml
+[prune]
+# Minimum pruning interval in blocks
+block_interval = 5
+
+[prune.segments]
+# Prune transaction sender recovery data older than 100,000 blocks
+sender_recovery = { distance = 100_000 }
+
+# Remove all TxNumber => TxHash mappings
+transaction_lookup = "full"
+
+# Prune receipts from before block 1,920,000
+receipts = { before = 1920000 }
+
+# Prune account history older than 100,000 blocks
+account_history = { distance = 100_000 }
+
+# Prune storage history older than 100,000 blocks
+storage_history = { distance = 100_000 }
+
+# Prune block body history older than 100,000 blocks
+bodies_history = { distance = 100_000 }
+```
+
+### Fine-grained receipt pruning by log filter
+
+You can retain receipts selectively based on which contract addresses emitted logs, rather than pruning all receipts uniformly. This overrides the `receipts` setting if both are specified.
+
+```toml
+[prune.segments.receipts_log_filter]
+# Keep receipts from this address from block 17,000,000 onwards
+"0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" = { before = 17000000 }
+# Keep receipts from this address for the last 1,001 blocks
+"0xdac17f958d2ee523a2206206994597c13d831ec7" = { distance = 1000 }
+```
+
+## The `[static_files]` section
+
+Configures how many blocks are stored per static file segment. Static files store finalized headers, transactions, and receipts in an append-only format separate from the main MDBX database.
+
+```toml
+[static_files.blocks_per_file]
+headers = 8192
+transactions = 8192
+receipts = 8192
+transaction_senders = 8192
+account_change_sets = 8192
+```
+
+<Tip>
+  Static files can be stored on slower, cheaper storage (SATA SSD or HDD) using `--datadir.static-files`. Keep the main `--datadir` on a fast TLC NVMe drive for best performance.
+</Tip>

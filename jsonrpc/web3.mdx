@@ -1,0 +1,131 @@
+---
+title: "web3 Namespace"
+description: "Utility methods for the web3 client: retrieve the client version string and compute Keccak-256 hashes."
+---
+
+The `web3` namespace provides two utility methods: one to retrieve the running client's version string, and one to compute a Keccak-256 hash of arbitrary data.
+
+Enable the `web3` namespace:
+
+```bash
+reth node --http --http.api web3
+```
+
+---
+
+## Methods
+
+### `web3_clientVersion`
+
+Returns a string identifying the client software, version, and platform. Useful for verifying which client and version is running behind an RPC endpoint.
+
+**Parameters:** None
+
+**Returns:** `string` — client version string in the format `client/version/platform`.
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"web3_clientVersion","params":[],"id":1}'
+```
+
+```json
+{"jsonrpc":"2.0","id":1,"result":"reth/v1.3.0/x86_64-unknown-linux-gnu"}
+```
+
+The format is `reth/vMAJOR.MINOR.PATCH/ARCH-OS`.
+
+---
+
+### `web3_sha3`
+
+Returns the Keccak-256 hash of the given data. Note that this uses Keccak-256, **not** SHA3-256 (they differ). This is the same hash function used internally by Ethereum for address derivation, event signatures, and storage slots.
+
+**Parameters:**
+- `data` — `Bytes`: hex-encoded input data to hash
+
+**Returns:** `B256` — Keccak-256 hash (32 bytes, hex-encoded).
+
+**Example:** Hash the UTF-8 string `"rust is awesome"`.
+
+First, convert the string to hex:
+
+```bash
+echo -n "rust is awesome" | xxd -p
+# 7275737420697320617765736f6d65
+```
+
+Then call `web3_sha3`:
+
+```bash
+curl -s -X POST http://127.0.0.1:8545 \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"web3_sha3","params":["0x7275737420697320617765736f6d65"],"id":1}'
+```
+
+```json
+{"jsonrpc":"2.0","id":1,"result":"0xe421b3428564a5c509ac118bad93a3b84485ec3f927e214b0c4c23076d4bc4e0"}
+```
+
+---
+
+## Using cast (Foundry)
+
+```bash
+# Get client version
+cast rpc web3_clientVersion
+
+# Compute Keccak-256 hash of hex data
+cast rpc web3_sha3 '"0x7275737420697320617765736f6d65"'
+
+# cast also has a direct keccak subcommand
+cast keccak "rust is awesome"
+```
+
+---
+
+## Common Use Cases
+
+<AccordionGroup>
+  <Accordion title="Computing event topic hashes">
+    Ethereum event topics are Keccak-256 hashes of the event signature. For example, the `Transfer(address,address,uint256)` event:
+
+    ```bash
+    echo -n "Transfer(address,address,uint256)" | xxd -p
+    # 5472616e7366657228616464726573732c616464726573732c75696e7432353629
+    ```
+
+    ```bash
+    curl -s -X POST http://127.0.0.1:8545 \
+      -H "Content-Type: application/json" \
+      -d '{"jsonrpc":"2.0","method":"web3_sha3","params":["0x5472616e7366657228616464726573732c616464726573732c75696e7432353629"],"id":1}'
+    ```
+
+    ```json
+    {"jsonrpc":"2.0","id":1,"result":"0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"}
+    ```
+
+    This matches the well-known ERC-20 `Transfer` topic.
+  </Accordion>
+
+  <Accordion title="Computing function selectors">
+    Solidity function selectors are the first 4 bytes of the Keccak-256 hash of the function signature:
+
+    ```bash
+    # Signature for balanceOf(address)
+    echo -n "balanceOf(address)" | xxd -p
+    # 62616c616e63654f662861646472657373290a
+    ```
+
+    Use `cast sig` for a quicker approach:
+
+    ```bash
+    cast sig "balanceOf(address)"
+    # 0x70a08231
+    ```
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  Keccak-256 and SHA3-256 are different algorithms. Ethereum uses Keccak-256 (the pre-standardization version). The NIST SHA-3 standard uses a slightly different padding. Do not confuse them when computing hashes off-chain.
+</Note>

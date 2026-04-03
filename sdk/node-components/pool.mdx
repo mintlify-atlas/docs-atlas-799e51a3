@@ -1,0 +1,227 @@
+---
+title: "Transaction pool"
+description: "How Reth's mempool validates, orders, and maintains pending transactions before block inclusion."
+---
+
+The transaction pool (mempool) manages pending transactions between the time they are submitted and when they are included in a block. It handles validation, priority ordering, replacement, eviction, and broadcasting to peers.
+
+## Overview
+
+<CardGroup cols={2}>
+  <Card title="Validation" icon="shield-check">
+    Checks sender balance, nonce correctness, gas price minimums, transaction size, and signature validity before admitting transactions.
+  </Card>
+  <Card title="Ordering" icon="arrow-up-wide-short">
+    Ranks transactions by effective tip per gas to maximize block rewards. Custom ordering strategies can implement MEV protection or priority queuing.
+  </Card>
+  <Card title="Sub-pools" icon="layer-group">
+    Separates transactions into pending, queued, base-fee, and blob sub-pools based on their readiness for inclusion.
+  </Card>
+  <Card title="Maintenance" icon="wrench">
+    Revalidates transactions after chain reorganizations, updates base fee thresholds, and evicts stale transactions.
+  </Card>
+</CardGroup>
+
+## Sub-pools
+
+The pool is internally divided into four sub-pools, and transactions move between them as chain state changes:
+
+| Sub-pool | Contents |
+|---|---|
+| **Pending** | Transactions with the correct next nonce, priced above the current base fee. Ready for inclusion. |
+| **Queued** | Transactions with a nonce gap (a lower nonce for the same sender is missing). |
+| **Base Fee** | Transactions whose max fee is below the current base fee but would become executable if the base fee drops. |
+| **Blob** | EIP-4844 blob transactions that do not currently meet the base fee or blob fee requirements. |
+
+## TransactionPool trait
+
+The `TransactionPool` trait is the primary interface for interacting with the pool from other node components (RPC, networking, block building).
+
+```rust
+use reth_transaction_pool::TransactionPool;
+
+// Submit a transaction from an external source (e.g. p2p network)
+let outcome = pool.add_external_transaction(transaction).await?;
+
+// Submit a transaction from the local RPC
+let outcome = pool
+    .add_transaction(TransactionOrigin::Local, transaction)
+    .await?;
+
+// Get the current pool size across all sub-pools
+let size = pool.pool_size();
+println!("Total: {}, Pending: {}", size.total, size.pending);
+
+// Stream newly pending transaction hashes (for propagation to peers)
+let mut pending_rx = pool.pending_transactions_listener();
+
+// Get the best transactions for block building
+let best = pool.best_transactions();
+
+// Listen to all transaction lifecycle events
+let mut events = pool.all_transactions_event_listener();
+```
+
+<Note>
+  `TransactionPool` is implemented for `Arc<Pool<...>>`, so it is cheap to clone and share across tasks.
+</Note>
+
+## Customizing the pool with NodeBuilder
+
+You can replace the default pool by implementing `PoolBuilder` and passing it to `NodeBuilder`. The example below is taken directly from the `custom-node-components` example in the Reth repository.
+
+```rust
+use reth_ethereum::{
+    node::{
+        api::{FullNodeTypes, NodeTypes},
+        builder::{components::PoolBuilder, BuilderContext},
+        node::EthereumAddOns,
+        EthereumNode,
+    },
+    pool::{
+        blobstore::InMemoryBlobStore, CoinbaseTipOrdering, EthTransactionPool, Pool, PoolConfig,
+        TransactionValidationTaskExecutor,
+    },
+    provider::CanonStateSubscriptions,
+    evm::primitives::ConfigureEvm,
+    EthPrimitives,
+};
+use reth_ethereum::chainspec::ChainSpec;
+
+/// A custom pool builder with a specific pool configuration.
+#[derive(Debug, Clone, Default)]
+pub struct CustomPoolBuilder {
+    pool_config: PoolConfig,
+}
+
+impl<Node, Evm> PoolBuilder<Node, Evm> for CustomPoolBuilder
+where
+    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = ChainSpec, Primitives = EthPrimitives>>,
+    Evm: ConfigureEvm<Primitives = EthPrimitives> + Clone + 'static,
+{
+    type Pool = EthTransactionPool<Node::Provider, InMemoryBlobStore, Evm>;
+
+    async fn build_pool(
+        self,
+        ctx: &BuilderContext<Node>,
+        evm_config: Evm,
+    ) -> eyre::Result<Self::Pool> {
+        let blob_store = InMemoryBlobStore::default();
+        let validator =
+            TransactionValidationTaskExecutor::eth_builder(ctx.provider().clone(), evm_config)
+                .kzg_settings(ctx.kzg_settings()?)
+                .with_additional_tasks(ctx.config().txpool.additional_validation_tasks)
+                .build_with_tasks(ctx.task_executor().clone(), blob_store.clone());
+
+        let transaction_pool = Pool::new(
+            validator,
+            CoinbaseTipOrdering::default(),
+            blob_store,
+            self.pool_config,
+        );
+
+        Ok(transaction_pool)
+    }
+}
+```
+
+Then wire it in when building the node:
+
+```rust
+let handle = builder
+    .with_types::<EthereumNode>()
+    .with_components(EthereumNode::components().pool(CustomPoolBuilder::default()))
+    .with_add_ons(EthereumAddOns::default())
+    .launch()
+    .await?;
+```
+
+## Pool maintenance tasks
+
+After building the pool, you should spawn maintenance tasks that keep it in sync with the canonical chain. The `custom-node-components` example demonstrates this pattern:
+
+```rust
+// Subscribe to canonical chain state changes
+let chain_events = ctx.provider().canonical_state_stream();
+let client = ctx.provider().clone();
+
+// Spawn a task to persist local transactions across restarts
+ctx.task_executor().spawn_critical_with_graceful_shutdown_signal(
+    "local transactions backup task",
+    |shutdown| {
+        reth_ethereum::pool::maintain::backup_local_transactions_task(
+            shutdown,
+            pool.clone(),
+            reth_ethereum::pool::maintain::LocalTransactionBackupConfig::with_local_txs_backup(
+                data_dir.txpool_transactions(),
+            ),
+        )
+    },
+);
+
+// Spawn the main maintenance task (revalidation, base fee updates, eviction)
+ctx.task_executor().spawn_critical_task(
+    "txpool maintenance task",
+    reth_ethereum::pool::maintain::maintain_transaction_pool_future(
+        client,
+        pool.clone(),
+        chain_events,
+        ctx.task_executor().clone(),
+        reth_ethereum::pool::maintain::MaintainPoolConfig {
+            max_tx_lifetime: pool.config().max_queued_lifetime,
+            ..Default::default()
+        },
+    ),
+);
+```
+
+## Transaction validation
+
+The default `EthTransactionValidator` checks:
+
+- Sender has sufficient balance to cover `gas_limit * max_fee_per_gas + value`
+- Nonce is either the sender's next expected nonce or a future nonce (queued)
+- `max_fee_per_gas` meets the protocol minimum
+- Encoded transaction size is within limits
+- ECDSA signature is valid
+- For EIP-4844 transactions: blob commitments are valid against the KZG trusted setup
+
+<Tip>
+  To implement custom validation logic (for example, blocking specific sender addresses or enforcing a custom minimum tip), wrap `EthTransactionValidator` with your own validator that applies additional rules before delegating to the standard checks.
+</Tip>
+
+## Event system
+
+The pool emits events throughout the transaction lifecycle. Subscribe to them using `all_transactions_event_listener` or `transaction_event_listener` for a specific hash:
+
+```rust
+use reth_transaction_pool::pool::TransactionEvent;
+
+let mut events = pool.all_transactions_event_listener();
+while let Some(event) = events.next().await {
+    match event.event {
+        TransactionEvent::Pending => { /* tx moved to pending */ }
+        TransactionEvent::Queued  => { /* tx moved to queued */ }
+        TransactionEvent::Mined { .. } => { /* tx included in a block */ }
+        TransactionEvent::Replaced { .. } => { /* tx replaced by higher-fee version */ }
+        TransactionEvent::Removed => { /* tx evicted from the pool */ }
+    }
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Consensus" href="/sdk/node-components/consensus">
+    Block validation rules that run after transactions are executed.
+  </Card>
+  <Card title="EVM" href="/sdk/node-components/evm">
+    How transactions from the pool are executed during block building.
+  </Card>
+  <Card title="RPC" href="/sdk/node-components/rpc">
+    The `eth_sendRawTransaction` path that feeds transactions into the pool.
+  </Card>
+  <Card title="Network" href="/sdk/node-components/network">
+    How transactions propagate to peers after entering the pool.
+  </Card>
+</CardGroup>

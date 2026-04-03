@@ -1,0 +1,139 @@
+---
+title: "Ports & Networking"
+description: "Default ports used by Reth for P2P, JSON-RPC, Engine API, and metrics, with firewall recommendations and instructions for changing port bindings."
+---
+
+Reth uses several ports for different purposes. This page lists each port, its protocol, and whether it should be exposed to the public internet.
+
+## Port summary
+
+| Port   | Protocol    | Purpose                     | Expose publicly? |
+| ------ | ----------- | --------------------------- | ---------------- |
+| `30303` | TCP + UDP  | P2P peering (discv4)        | Yes              |
+| `9200`  | UDP        | Peer discovery (discv5)     | Yes, if using discv5 |
+| `8545`  | TCP        | HTTP JSON-RPC               | No (by default)  |
+| `8546`  | TCP        | WebSocket JSON-RPC          | No (by default)  |
+| `8551`  | TCP        | Engine API (consensus layer) | No               |
+| `9001`  | TCP        | Metrics (Prometheus)        | No               |
+
+## P2P peering port — 30303
+
+- **Protocol:** TCP and UDP
+- **Purpose:** Used by the devp2p networking stack for peer discovery (discv4) and block/transaction propagation.
+- **Firewall recommendation:** Open this port for both TCP and UDP, inbound and outbound. Without it, your node cannot discover or connect to peers and will not sync.
+
+To change the P2P port:
+
+```bash
+reth node --port 30303
+```
+
+## Discovery v5 port — 9200
+
+- **Protocol:** UDP
+- **Purpose:** Used by the discv5 peer discovery protocol. This is a newer discovery mechanism that operates independently from discv4 on port 30303.
+- **Firewall recommendation:** Open this port if you enable discv5 with `--enable-discv5-discovery`.
+
+To change the discv5 port:
+
+```bash
+reth node --enable-discv5-discovery --discv5.port 9200
+```
+
+## HTTP JSON-RPC port — 8545
+
+- **Protocol:** TCP
+- **Purpose:** Provides an HTTP interface for JSON-RPC calls. External applications and tools (such as wallets, block explorers, and scripts) use this port to query the node.
+- **Firewall recommendation:** Do not expose this port publicly by default.
+
+<Warning>
+  Exposing the HTTP RPC port to the public internet without authentication gives anyone the ability to query your node. If you need public RPC access, place a reverse proxy with authentication in front of the port instead.
+</Warning>
+
+HTTP RPC is disabled by default. To enable it:
+
+```bash
+reth node --http --http.addr 127.0.0.1 --http.port 8545
+```
+
+To enable specific API namespaces:
+
+```bash
+reth node --http --http.api eth,net,web3,txpool
+```
+
+## WebSocket JSON-RPC port — 8546
+
+- **Protocol:** TCP
+- **Purpose:** Provides a WebSocket interface for JSON-RPC calls. Supports real-time subscriptions (for example, `eth_subscribe` for new block headers).
+- **Firewall recommendation:** Do not expose this port publicly by default.
+
+WebSocket RPC is disabled by default. To enable it:
+
+```bash
+reth node --ws --ws.addr 127.0.0.1 --ws.port 8546
+```
+
+To enable specific API namespaces:
+
+```bash
+reth node --ws --ws.api eth,net,web3,txpool
+```
+
+## Engine API port — 8551
+
+- **Protocol:** TCP
+- **Purpose:** Used for authenticated communication between Reth (execution layer) and the consensus layer client. This is the [Engine API](https://github.com/ethereum/execution-apis/blob/main/src/engine/common.md) required for post-Merge operation.
+- **Firewall recommendation:** Never expose this port publicly. It must only be accessible to your consensus client.
+
+The Engine API requires a JWT secret for authentication. To configure it:
+
+```bash
+reth node \
+    --authrpc.jwtsecret /path/to/jwt.hex \
+    --authrpc.addr 127.0.0.1 \
+    --authrpc.port 8551
+```
+
+<Tip>
+  If your consensus client runs on a separate machine, set `--authrpc.addr` to the interface facing that machine, and use firewall rules to restrict access to only the consensus client's IP address.
+</Tip>
+
+## Metrics port — 9001
+
+- **Protocol:** TCP
+- **Purpose:** Exposes a Prometheus-compatible metrics endpoint for monitoring node performance, sync status, peer counts, and more.
+- **Firewall recommendation:** Do not expose this port publicly. Use it only for internal monitoring infrastructure.
+
+Metrics are disabled by default. To enable them:
+
+```bash
+reth node --metrics 127.0.0.1:9001
+```
+
+<Note>
+  When Reth is built with the `jemalloc-prof` feature, the metrics server also exposes a heap profiling endpoint at `/debug/pprof/heap` on port 9001.
+</Note>
+
+## Changing ports
+
+You can override any default port with the corresponding CLI flag. The most commonly changed ports and their flags:
+
+| Port            | Flag                    |
+| --------------- | ----------------------- |
+| P2P (30303)     | `--port`                |
+| HTTP RPC (8545) | `--http.port`           |
+| WS RPC (8546)   | `--ws.port`             |
+| Engine API (8551) | `--authrpc.port`      |
+| Metrics (9001)  | `--metrics`             |
+| discv5 (9200)   | `--discv5.port`         |
+
+Example — run Reth with non-default ports for HTTP RPC and Engine API:
+
+```bash
+reth node \
+    --http \
+    --http.port 9545 \
+    --authrpc.port 9551 \
+    --authrpc.jwtsecret /path/to/jwt.hex
+```
